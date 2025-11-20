@@ -8,6 +8,9 @@ streamlit = "*"
 pandas = "*"
 numpy = "*"
 plotly = "*"
+sqlalchemy = "*"
+pymysql = "*"
+python-dotenv = "*"
 
 [dev-packages]
 

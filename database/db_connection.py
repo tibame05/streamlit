@@ -1,501 +1,321 @@
 import pandas as pd
 from datetime import datetime, date
-from typing import Optional, Any, Generator, List, Dict
-from contextlib import contextmanager
+from typing import Optional, List, Dict
 
-from sqlalchemy.orm import Session
+from sqlalchemy import text
 
-from sqlalchemy import Table, text
-from sqlalchemy.dialects.mysql import (
-    insert,  # 專用於 MySQL 的 insert 語法，可支援 on_duplicate_key_update
-)
-
-from database import logger, SessionLocal
-from database.models import (
-    etfs_table,
-    etf_daily_prices_table,
-    etf_dividends_table,
-    etf_tris_table,
-    etf_backtests_table,
-    etl_sync_status_table,
-)
+from database import logger, engine
 
 
-def _filter_and_replace_nan(
-    records: List[Dict[str, Any]], required_fields: List[str]
-) -> List[Dict[str, Any]]:
+# ================================
+# 資料讀取函式 (用於 Streamlit App)
+# ================================
+
+def get_etf_summary() -> pd.DataFrame:
     """
-    過濾資料並將 NaN 轉為 None，移除主鍵缺失的資料列。
-
-    parameters:
-        records (List[Dict[str, Any]]): 原始資料紀錄清單
-        required_fields (List): 主鍵欄位，任一欄為缺失或 NaN 則該列會被移除
-
+    讀取 ETF 摘要資料，用於總覽頁面。
+    
     returns:
-        List[Dict[str, Any]]: 處理後的紀錄清單
+        pd.DataFrame: ETF 摘要資料，包含 etf_id, name, region, expense_ratio, 
+                     inception_date, volume, annual_return_3y, volatility_3y
     """
-
-    df = pd.DataFrame(records)
-
-    # 移除缺少主鍵的列
-    df_clean = df.dropna(subset=required_fields)
-    df_clean = df_clean.astype(object)  # 全欄轉 object，避免轉成 None 後又變成 NaN
-
-    # NaN → None
-    df_clean = df_clean.where(pd.notnull(df_clean), None)
-
-    return df_clean.to_dict(orient="records")
-
-
-def _upsert_records_to_db(
-    records: List[Dict[str, Any]],
-    table: Table,
-    primary_keys: List[str],
-    session: Optional[Session] = None,
-):
+    query = """
+        SELECT etf_id, name, region, expense_ratio, 
+               inception_date, volume, 
+               annual_return_3y, volatility_3y
+        FROM etf_summary
+        ORDER BY volume DESC
     """
-    將資料寫入資料庫，若主鍵已存在則更新該筆資料。
-
-    parameters:
-        records (List[Dict[str, Any]]): 欲寫入的資料紀錄清單
-        table (Table): SQLAlchemy 定義的資料表物件
-        primary_keys (List[str]): 主鍵欄位名稱，用於排除 UPSERT 更新的欄位
-        session (Session, optional): 可傳入既有 Session，否則自動建立
-
-    returns:
-        None
-    """
-
-    if not records:
-        logger.error(f"No records to upsert for table {table.name}")
-        return
-
-    insert_stmt = insert(table)
-    update_stmt = insert_stmt.on_duplicate_key_update(
-        {
-            col.name: insert_stmt.inserted[col.name]
-            for col in table.columns
-            if col.name not in primary_keys
-        }
-    )
-
     try:
-        with get_session(session) as s:
-            s.execute(update_stmt, records)
-        logger.info(f"Upserted {len(records)} records into table {table.name}")
+        df = pd.read_sql(query, engine)
+        logger.info(f"Loaded {len(df)} ETF summary records")
+        return df
     except Exception as e:
-        logger.error(f"Upsert to {table.name} failed: {e}", exc_info=True)
+        logger.error(f"Failed to load ETF summary: {e}", exc_info=True)
+        return pd.DataFrame()
 
 
-def write_etfs_to_db(records: List[Dict[str, Any]], session: Optional[Session] = None):
+def get_active_etfs() -> pd.DataFrame:
     """
-    將 ETF 基本資料寫入資料庫，若主鍵已存在則更新資料。
-
-    parameters:
-        records (List[Dict[str, Any]]):
-            ETF 基本資料紀錄，每筆資料需包含主鍵欄位 (etf_id)
-            及其他對應 `etfs_table` 欄位的資料。
-        session (Session, optional): 可傳入既有 Session，否則自動建立
-
+    讀取所有活躍的 ETF 清單。
+    
     returns:
-        None
+        pd.DataFrame: ETF 清單，包含 etf_id, name, region
     """
-
-    primary_keys = ["etf_id"]
-    cleaned_records = _filter_and_replace_nan(records, primary_keys)
-    logger.info(f"Writing {len(cleaned_records)} ETF records to DB")
-    _upsert_records_to_db(cleaned_records, etfs_table, primary_keys, session)
-
-
-def write_etf_daily_price_to_db(
-    records: List[Dict[str, Any]], session: Optional[Session] = None
-):
+    query = """
+        SELECT etf_id, name, region 
+        FROM etfs 
+        WHERE status = 'ACTIVE' 
+        ORDER BY name
     """
-    將 ETF 每日價格資料寫入資料庫，若主鍵已存在則更新資料。
+    try:
+        df = pd.read_sql(query, engine)
+        logger.info(f"Loaded {len(df)} active ETF records")
+        return df
+    except Exception as e:
+        logger.error(f"Failed to load active ETFs: {e}", exc_info=True)
+        return pd.DataFrame()
 
-    parameters:
-        records (List[Dict[str, Any]]):
-            ETF 每日價格紀錄，每筆資料需包含主鍵欄位 (etf_id, trade_date)
-            以及價格相關欄位 (open, close, high, low, volume, adj_close)。
-        session (Session, optional): 可傳入既有 Session，否則自動建立
 
-    returns:
-        None
+def get_etf_prices(etf_id: str, start_date: str, end_date: str) -> pd.DataFrame:
     """
-
-    primary_keys = ["etf_id", "trade_date"]
-    cleaned_records = _filter_and_replace_nan(records, primary_keys)
-    logger.info(f"Writing {len(cleaned_records)} ETF daily price records to DB")
-    _upsert_records_to_db(
-        cleaned_records, etf_daily_prices_table, primary_keys, session
-    )
-
-
-def write_etf_dividend_to_db(
-    records: List[Dict[str, Any]], session: Optional[Session] = None
-):
-    """
-    將 ETF 配息資料寫入資料庫，若主鍵已存在則更新資料。
-
-    parameters:
-        records (List[Dict[str, Any]]):
-            ETF 配息紀錄，每筆資料需包含主鍵欄位 (etf_id, ex_date)
-            及配息金額等欄位。
-        session (Session, optional): 可傳入既有 Session，否則自動建立
-
-    returns:
-        None
-    """
-
-    primary_keys = ["etf_id", "ex_date"]
-    cleaned_records = _filter_and_replace_nan(records, primary_keys)
-    logger.info(f"Writing {len(cleaned_records)} ETF dividend records to DB")
-    _upsert_records_to_db(cleaned_records, etf_dividends_table, primary_keys, session)
-
-
-def write_etf_tris_to_db(
-    records: List[Dict[str, Any]], session: Optional[Session] = None
-):
-    """
-    將 ETF 含息累積指數 (TRI) 資料寫入資料庫，若主鍵已存在則更新資料。
-
-    parameters:
-        records (List[Dict[str, Any]]):
-            ETF TRI 紀錄，每筆資料需包含主鍵欄位 (etf_id, tri_date)
-            及 TRI 數值欄位。
-        session (Session, optional): 可傳入既有 Session，否則自動建立
-
-    returns:
-        None
-    """
-
-    primary_keys = ["etf_id", "tri_date"]
-    cleaned_records = _filter_and_replace_nan(records, primary_keys)
-    logger.info(f"Writing {len(cleaned_records)} ETF TRI records to DB")
-    _upsert_records_to_db(cleaned_records, etf_tris_table, primary_keys, session)
-
-
-def write_etf_backtest_results_to_db(
-    records: List[Dict[str, Any]], session: Optional[Session] = None
-):
-    """
-    將 ETF 回測結果寫入資料庫，若主鍵已存在則更新資料。
-
-    parameters:
-        records (List[Dict[str, Any]]):
-            ETF 回測結果記錄，每筆資料需包含主鍵欄位 (etf_id, label)
-            及回測績效相關指標。
-        session (Session, optional): 可傳入既有 Session，否則自動建立
-
-    returns:
-        None
-    """
-
-    primary_keys = ["etf_id", "label"]  # 更新主鍵包含 label
-    cleaned_records = _filter_and_replace_nan(records, primary_keys)
-    logger.info(f"Writing {len(cleaned_records)} ETF backtest records to DB")
-    _upsert_records_to_db(cleaned_records, etf_backtests_table, primary_keys, session)
-
-
-def write_etl_sync_status_to_db(
-    records: List[Dict[str, Any]], session: Optional[Session] = None
-):
-    """
-    將 ETL 同步狀態寫入資料庫，若主鍵已存在則更新資料。
-
-    parameters:
-        records (List[Dict[str, Any]]):
-            ETL 同步狀態紀錄，每筆資料需包含主鍵欄位 (etf_id)
-            及同步狀態相關欄位。
-        session (Session, optional): 可傳入既有 Session，否則自動建立
-
-    returns:
-        None
-    """
-
-    primary_keys = ["etf_id"]
-    cleaned_records = _filter_and_replace_nan(records, primary_keys)
-    logger.info(f"Writing {len(cleaned_records)} ETL sync status records to DB")
-    _upsert_records_to_db(cleaned_records, etl_sync_status_table, primary_keys, session)
-
-
-def read_etfs_id(
-    session: Optional[Session] = None, region: Optional[str] = None
-) -> List[Dict[str, Any]]:
-    """
-    讀取所有 ETF 的 etf_id 與 region。
-
-    parameters:
-        session (Session, optional): 可傳入既有 Session，否則自動建立
-        region (str, optional): 若指定，僅回傳該市場區域的 ETF
-
-    returns:
-        List[Dict[str, Any]]: ETF 基本識別資訊清單
-            - etf_id (str)
-            - region (str)
-    """
-
-    records = []
-    with get_session(session) as s:
-        sql = """
-            SELECT etf_id, region
-            FROM etfs
-            WHERE status = 'ACTIVE'
-        """
-        if region:
-            sql += " AND region = :region"
-        rows = s.execute(text(sql), {"region": region} if region else {})
-
-        for r in rows:
-            records.append({"etf_id": r.etf_id, "region": r.region})
-
-        return records
-
-
-def read_etl_sync_status(
-    etf_id: str, session: Optional[Session] = None
-) -> List[Dict[str, Any]]:
-    """
-    讀取 ETL 同步狀態表，回傳各 ETF 的最新資料狀態。
-
-    parameters:
-        etf_id (str, optional): 若指定，僅回傳該 ETF 的同步狀態
-        session (Session, optional): 可傳入既有 Session，否則自動建立
-
-    returns:
-        List[Dict[str, Any]]: 各 ETF 的同步狀態資訊
-            - etf_id (str)
-            - last_price_date (str | None)
-            - price_count (int)
-            - last_dividend_ex_date (str | None)
-            - dividend_count (int)
-            - last_tri_date (str | None)
-            - tri_count (int)
-            - updated_at (str | None)
-    """
-
-    records = []
-    with get_session(session) as s:
-        sql = """
-            SELECT etf_id, last_price_date, price_count,
-                   last_dividend_ex_date, dividend_count,
-                   last_tri_date, tri_count, updated_at
-            FROM etl_sync_status
-            WHERE etf_id = :etf_id
-        """
-        rows = s.execute(text(sql), {"etf_id": etf_id})
-
-        for r in rows:
-            records.append(
-                {
-                    "etf_id": r.etf_id,
-                    "last_price_date": _to_date_str(r.last_price_date),
-                    "price_count": int(r.price_count)
-                    if r.price_count is not None
-                    else 0,
-                    "last_dividend_ex_date": _to_date_str(r.last_dividend_ex_date),
-                    "dividend_count": int(r.dividend_count)
-                    if r.dividend_count is not None
-                    else 0,
-                    "last_tri_date": _to_date_str(r.last_tri_date),
-                    "tri_count": int(r.tri_count) if r.tri_count is not None else 0,
-                    "updated_at": _to_datetime_str(r.updated_at),
-                }
-            )
-        return records
-
-
-def read_prices_range(
-    etf_id: str, start_date: str, end_date: str, session: Optional[Session] = None
-) -> List[Dict[str, Any]]:
-    """
-    讀取指定 ETF 在區間內的每日價格資料。
-
+    讀取指定 ETF 在日期區間內的價格資料。
+    
     parameters:
         etf_id (str): ETF 代碼
         start_date (str): 起始日期 (YYYY-MM-DD)
         end_date (str): 結束日期 (YYYY-MM-DD)
-        session (Session, optional): 可傳入既有 Session，否則自動建立
-
+    
     returns:
-        List[Dict[str, Any]]: ETF 每日價格紀錄
-            - etf_id (str)
-            - trade_date (str)
-            - open, high, low, close, adj_close (float | None)
-            - volume (int | None)
+        pd.DataFrame: 價格資料，包含 trade_date, adj_close
     """
-
-    records = []
-    with get_session(session) as s:
-        sql = """
-            SELECT etf_id, trade_date, open, high, low, close, adj_close, volume
-            FROM etf_daily_prices
-            WHERE etf_id = :etf_id AND trade_date BETWEEN :start AND :end
-            ORDER BY trade_date ASC
-        """
-        rows = s.execute(
-            text(sql), {"etf_id": etf_id, "start": start_date, "end": end_date}
+    query = text("""
+        SELECT trade_date, adj_close
+        FROM etf_daily_prices
+        WHERE etf_id = :etf_id
+          AND trade_date BETWEEN :start_date AND :end_date
+        ORDER BY trade_date
+    """)
+    
+    try:
+        df = pd.read_sql(
+            query, 
+            engine, 
+            params={
+                "etf_id": etf_id,
+                "start_date": start_date,
+                "end_date": end_date
+            }
         )
-
-        for r in rows:
-            records.append(
-                {
-                    "etf_id": r.etf_id,
-                    "trade_date": _to_date_str(r.trade_date),
-                    "open": float(r.open) if r.open is not None else None,
-                    "high": float(r.high) if r.high is not None else None,
-                    "low": float(r.low) if r.low is not None else None,
-                    "close": float(r.close) if r.close is not None else None,
-                    "adj_close": float(r.adj_close)
-                    if r.adj_close is not None
-                    else None,
-                    "volume": int(r.volume) if r.volume is not None else None,
-                }
-            )
-
-        return records
+        df["trade_date"] = pd.to_datetime(df["trade_date"])
+        logger.info(f"Loaded {len(df)} price records for {etf_id}")
+        return df
+    except Exception as e:
+        logger.error(f"Failed to load prices for {etf_id}: {e}", exc_info=True)
+        return pd.DataFrame()
 
 
-def read_dividends_range(
-    etf_id: str, start_date: str, end_date: str, session: Optional[Session] = None
-) -> List[Dict[str, Any]]:
+def get_etf_table_with_metrics() -> pd.DataFrame:
     """
-    讀取指定 ETF 在區間內的配息資料。
+    讀取完整的 ETF 表格，包含回測績效指標。
+    用於「ETF 總表」視覺化。
+    
+    returns:
+        pd.DataFrame: 包含 ETF 基本資料 + 回測績效（1y, 3y, 10y）
+            - etf_id, etf_name, region, expense_ratio, inception_date
+            - avg_dividend_1y (近一年平均配息)
+            - volume_sum_1y, volume_sum_3y, volume_sum_10y (成交量總和)
+            - cagr_1y, cagr_3y, cagr_10y (年化報酬率)
+            - volatility_1y, volatility_3y, volatility_10y (波動度)
+    """
+    query = """
+        SELECT 
+            e.etf_id,
+            e.etf_name,
+            e.region,
+            e.expense_ratio,
+            e.inception_date,
+            
+            -- 近一年平均配息
+            COALESCE(
+                (SELECT AVG(dividend_per_unit) 
+                 FROM etf_dividends d 
+                 WHERE d.etf_id = e.etf_id 
+                   AND d.ex_date >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)),
+                0
+            ) AS avg_dividend_1y,
+            
+            -- 回測績效（1年）
+            b1.cagr AS cagr_1y,
+            b1.volatility AS volatility_1y,
+            b1.max_drawdown AS max_drawdown_1y,
+            b1.sharpe_ratio AS sharpe_ratio_1y,
+            
+            -- 回測績效（3年）
+            b3.cagr AS cagr_3y,
+            b3.volatility AS volatility_3y,
+            b3.max_drawdown AS max_drawdown_3y,
+            b3.sharpe_ratio AS sharpe_ratio_3y,
+            
+            -- 回測績效（10年）
+            b10.cagr AS cagr_10y,
+            b10.volatility AS volatility_10y,
+            b10.max_drawdown AS max_drawdown_10y,
+            b10.sharpe_ratio AS sharpe_ratio_10y
+            
+        FROM etfs e
+        LEFT JOIN etf_backtests b1 ON e.etf_id = b1.etf_id AND b1.label = '1y'
+        LEFT JOIN etf_backtests b3 ON e.etf_id = b3.etf_id AND b3.label = '3y'
+        LEFT JOIN etf_backtests b10 ON e.etf_id = b10.etf_id AND b10.label = '10y'
+        WHERE e.status = 'ACTIVE'
+        ORDER BY e.etf_id
+    """
+    
+    try:
+        df = pd.read_sql(query, engine)
+        logger.info(f"Loaded {len(df)} ETF records with metrics")
+        return df
+    except Exception as e:
+        logger.error(f"Failed to load ETF table with metrics: {e}", exc_info=True)
+        return pd.DataFrame()
 
+
+def get_etf_backtest_data(period: str = '3y') -> pd.DataFrame:
+    """
+    讀取指定期間的回測數據，用於風險–報酬散點圖。
+    
+    parameters:
+        period (str): 回測期間 ('1y', '3y', '10y')
+    
+    returns:
+        pd.DataFrame: 包含 etf_id, etf_name, region, cagr, volatility, volume_sum
+    """
+    query = text("""
+        SELECT 
+            e.etf_id,
+            e.etf_name,
+            e.region,
+            b.cagr,
+            b.volatility,
+            b.max_drawdown,
+            b.sharpe_ratio,
+            b.total_return,
+            -- 計算該期間的平均成交量
+            (SELECT AVG(volume) 
+             FROM etf_daily_prices p 
+             WHERE p.etf_id = e.etf_id 
+               AND p.trade_date >= b.start_date 
+               AND p.trade_date <= b.end_date
+            ) AS avg_volume
+        FROM etfs e
+        INNER JOIN etf_backtests b ON e.etf_id = b.etf_id
+        WHERE e.status = 'ACTIVE'
+          AND b.label = :period
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine, params={"period": period})
+        logger.info(f"Loaded {len(df)} backtest records for period {period}")
+        return df
+    except Exception as e:
+        logger.error(f"Failed to load backtest data for {period}: {e}", exc_info=True)
+        return pd.DataFrame()
+
+
+def get_etf_ohlcv(etf_id: str, start_date: str, end_date: str) -> pd.DataFrame:
+    """
+    讀取 K 棒資料（OHLCV）。
+    
     parameters:
         etf_id (str): ETF 代碼
         start_date (str): 起始日期 (YYYY-MM-DD)
         end_date (str): 結束日期 (YYYY-MM-DD)
-        session (Session, optional): 可傳入既有 Session，否則自動建立
-
+    
     returns:
-        List[Dict[str, Any]]: ETF 配息紀錄
-            - etf_id (str)
-            - ex_date (str)
-            - dividend_per_unit (float | None)
-            - currency (str)
+        pd.DataFrame: 包含 trade_date, open, high, low, close, adj_close, volume
     """
-
-    records = []
-    with get_session(session) as s:
-        sql = """
-            SELECT etf_id, ex_date, dividend_per_unit, currency
-            FROM etf_dividends
-            WHERE etf_id = :etf_id
-              AND ex_date BETWEEN :start AND :end
-            ORDER BY ex_date ASC
-        """
-        rows = s.execute(
-            text(sql), {"etf_id": etf_id, "start": start_date, "end": end_date}
+    query = text("""
+        SELECT 
+            trade_date,
+            open,
+            high,
+            low,
+            close,
+            adj_close,
+            volume
+        FROM etf_daily_prices
+        WHERE etf_id = :etf_id
+          AND trade_date BETWEEN :start_date AND :end_date
+        ORDER BY trade_date
+    """)
+    
+    try:
+        df = pd.read_sql(
+            query, 
+            engine, 
+            params={
+                "etf_id": etf_id,
+                "start_date": start_date,
+                "end_date": end_date
+            }
         )
-
-        for r in rows:
-            records.append(
-                {
-                    "etf_id": r.etf_id,
-                    "ex_date": _to_date_str(r.ex_date),
-                    "dividend_per_unit": float(r.dividend_per_unit)
-                    if r.dividend_per_unit is not None
-                    else None,
-                    "currency": r.currency,
-                }
-            )
-
-        return records
+        df["trade_date"] = pd.to_datetime(df["trade_date"])
+        logger.info(f"Loaded {len(df)} OHLCV records for {etf_id}")
+        return df
+    except Exception as e:
+        logger.error(f"Failed to load OHLCV for {etf_id}: {e}", exc_info=True)
+        return pd.DataFrame()
 
 
-def read_tris_range(
-    etf_id: str, start_date: str, end_date: str, session: Optional[Session] = None
-) -> List[Dict[str, Any]]:
+def get_etf_info(etf_id: str) -> Dict:
     """
-    讀取指定 ETF 在區間內的 TRI (含息累積指數) 資料。
-
+    讀取單一 ETF 的基本資訊。
+    
     parameters:
         etf_id (str): ETF 代碼
-        start_date (str): 起始日期 (YYYY-MM-DD)
-        end_date (str): 結束日期 (YYYY-MM-DD)
-        session (Session, optional): 可傳入既有 Session，否則自動建立
-
+    
     returns:
-        List[Dict[str, Any]]: ETF TRI 紀錄
-            - etf_id (str)
-            - tri_date (str)
-            - tri (float | None)
+        dict: ETF 基本資訊
     """
+    query = text("""
+        SELECT 
+            etf_id,
+            etf_name,
+            region,
+            currency,
+            expense_ratio,
+            inception_date,
+            status
+        FROM etfs
+        WHERE etf_id = :etf_id
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine, params={"etf_id": etf_id})
+        if not df.empty:
+            logger.info(f"Loaded info for {etf_id}")
+            return df.iloc[0].to_dict()
+        else:
+            logger.warning(f"No info found for {etf_id}")
+            return {}
+    except Exception as e:
+        logger.error(f"Failed to load info for {etf_id}: {e}", exc_info=True)
+        return {}
 
-    records = []
-    with get_session(session) as s:
-        sql = """
-            SELECT etf_id, tri_date, tri
-            FROM etf_tris
-            WHERE etf_id = :etf_id AND tri_date BETWEEN :start AND :end
-            ORDER BY tri_date ASC
-        """
-        rows = s.execute(
-            text(sql), {"etf_id": etf_id, "start": start_date, "end": end_date}
-        )
 
-        for r in rows:
-            records.append(
-                {
-                    "etf_id": r.etf_id,
-                    "tri_date": _to_date_str(r.tri_date),
-                    "tri": float(r.tri) if r.tri is not None else None,
-                }
-            )
-
-        return records
-
-
-def _to_date_str(dt: Optional[date]) -> Optional[str]:
+def get_etf_backtest_by_id(etf_id: str, period: str) -> Dict:
     """
-    將 `date` 物件轉換為字串 (YYYY-MM-DD 格式)。
-
+    讀取指定 ETF 的回測績效。
+    
     parameters:
-        dt (date, optional): 欲轉換的日期物件，若為 None 則回傳 None
-
+        etf_id (str): ETF 代碼
+        period (str): 回測期間 ('1y', '3y', '10y')
+    
     returns:
-        str | None: 轉換後的日期字串，或 None
+        dict: 回測績效數據
     """
+    query = text("""
+        SELECT 
+            start_date,
+            end_date,
+            cagr,
+            sharpe_ratio,
+            max_drawdown,
+            total_return,
+            volatility
+        FROM etf_backtests
+        WHERE etf_id = :etf_id AND label = :period
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine, params={"etf_id": etf_id, "period": period})
+        if not df.empty:
+            logger.info(f"Loaded backtest for {etf_id} ({period})")
+            return df.iloc[0].to_dict()
+        else:
+            logger.warning(f"No backtest found for {etf_id} ({period})")
+            return {}
+    except Exception as e:
+        logger.error(f"Failed to load backtest for {etf_id} ({period}): {e}", exc_info=True)
+        return {}
 
-    return dt.strftime("%Y-%m-%d") if dt else None
-
-
-def _to_datetime_str(dt: Optional[datetime]) -> Optional[str]:
-    """
-    將 `date` 物件轉換為字串 (YYYY-MM-DD 格式)。
-
-    parameters:
-        dt (date, optional): 欲轉換的日期物件，若為 None 則回傳 None
-
-    returns:
-        str | None: 轉換後的日期字串，或 None
-    """
-
-    return dt.isoformat() if dt else None
-
-
-# ======================
-# 共用 Session 管理
-# ======================
-
-
-@contextmanager
-def get_session(session: Optional[Session] = None) -> Generator[Session, None, None]:
-    """
-    提供統一的 Session 管理機制。
-    - 若呼叫端已傳入 session，直接使用。
-    - 否則自動建立新的 Session，並確保正確 commit/rollback。
-
-    parameters:
-        session (Session, optional): 可傳入既有 Session，否則自動建立
-
-    returns:
-        Generator[Session]: SQLAlchemy Session 物件
-    """
-
-    if session is not None:
-        yield session
-    else:
-        with SessionLocal.begin() as s:
-            yield s
