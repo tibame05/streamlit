@@ -27,20 +27,32 @@ region = st.sidebar.selectbox(
 )
 region_value = None if region == "不限" else region
 
-# ===== 2. ETF 代號篩選 =====
+# ===== 2. 時間範圍篩選 =====
+
+st.sidebar.subheader("時間範圍篩選")
+
+# 時間範圍選擇
+time_period = st.sidebar.selectbox(
+    "顯示時間範圍（單選）",
+    options=["不限", "1年", "3年", "10年"],
+    index=0,
+    help="選擇要顯示的資料時間範圍"
+)
+
+# ===== 3. ETF 代號篩選 =====
 st.sidebar.subheader("ETF 代號篩選")
 
 # 先查詢所有 ETF 代號 (用於下拉選單)
 @st.cache_data(ttl=3600)  # 快取1小時
-def get_all_etf_ids(region=None):
-    """取得所有 ETF 代號"""
-    df = get_etf_overview(region=region)
+def get_all_etf_ids(region=None, time_period="不限"): 
+    """取得所有符合時間區間篩選條件的 ETF 代號"""
+    df = get_etf_overview(region=region, time_period=time_period)
     if not df.empty:
         return sorted(df['ETF代號'].tolist())
     return []
 
 # 取得 ETF 代號列表
-all_etf_ids = get_all_etf_ids(region=region_value)
+all_etf_ids = get_all_etf_ids(region=region_value, time_period=time_period)
 
 # 多選下拉選單 (可搜尋)
 selected_etf_ids = st.sidebar.multiselect(
@@ -53,27 +65,18 @@ selected_etf_ids = st.sidebar.multiselect(
 
 etf_ids = selected_etf_ids if selected_etf_ids else None
 
-# ===== 3. 顯示欄位篩選 =====
-st.sidebar.subheader("時間範圍篩選")
-
-# 時間範圍選擇
-time_period = st.sidebar.selectbox(
-    "顯示時間範圍（單選）",
-    options=["不限", "1年", "3年", "10年"],
-    index=0,
-    help="選擇要顯示的資料時間範圍"
-)
+# ===== 4. 時間範圍篩選與 =====
 
 # 根據時間範圍決定要顯示的欄位
 if time_period == "不限":
     display_columns = [
         'ETF代號', 'ETF名稱', '管理費(%)', '成立日',
-        '1年成交量總和', '3年成交量總和', '10年成交量總和',
         '1年報酬率(%)', '3年報酬率(%)', '10年報酬率(%)',
-        '1年波動度(%)', '3年波動度(%)', '10年波動度(%)'
+        '1年波動度(%)', '3年波動度(%)', '10年波動度(%)',
+        '1年成交量總和', '3年成交量總和', '10年成交量總和'
     ]
     sort_options = [
-        "ETF代號", "ETF名稱", "管理費(%)",
+        "ETF代號", "管理費(%)", '成立日',
         "1年報酬率(%)", "3年報酬率(%)", "10年報酬率(%)",
         "1年波動度(%)", "3年波動度(%)", "10年波動度(%)",
         "1年成交量總和", "3年成交量總和", "10年成交量總和"
@@ -81,28 +84,28 @@ if time_period == "不限":
 elif time_period == "1年":
     display_columns = [
         'ETF代號', 'ETF名稱', '管理費(%)', '成立日',
-        '1年成交量總和', '1年報酬率(%)', '1年波動度(%)'
+        '1年報酬率(%)', '1年波動度(%)', '1年成交量總和'
     ]
     sort_options = [
-        "ETF代號", "ETF名稱", "管理費(%)",
+        "ETF代號", "管理費(%)", '成立日',
         "1年報酬率(%)", "1年波動度(%)", "1年成交量總和"
     ]
 elif time_period == "3年":
     display_columns = [
         'ETF代號', 'ETF名稱', '管理費(%)', '成立日',
-        '3年成交量總和', '3年報酬率(%)', '3年波動度(%)'
+        '3年報酬率(%)', '3年波動度(%)', '3年成交量總和'
     ]
     sort_options = [
-        "ETF代號", "ETF名稱", "管理費(%)",
+        "ETF代號", "管理費(%)", '成立日',
         "3年報酬率(%)", "3年波動度(%)", "3年成交量總和"
     ]
 else:  # 10年
     display_columns = [
         'ETF代號', 'ETF名稱', '管理費(%)', '成立日',
-        '10年成交量總和', '10年報酬率(%)', '10年波動度(%)'
+        '10年報酬率(%)', '10年波動度(%)', '10年成交量總和'
     ]
     sort_options = [
-        "ETF代號", "ETF名稱", "管理費(%)",
+        "ETF代號", "管理費(%)", '成立日',
         "10年報酬率(%)", "10年波動度(%)", "10年成交量總和"
     ]
 
@@ -142,7 +145,8 @@ if st.session_state['trigger_query']:
                 region=region_value,
                 etf_ids=etf_ids,
                 sort_by=sort_by,
-                ascending=ascending
+                ascending=ascending,
+                time_period=time_period
             )
             
             # 儲存到 session state
@@ -162,8 +166,6 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
     
     # 只顯示選擇的欄位
     df_display = df[display_columns]
-
-    # [修改] 移除了原有的 st.metric 統計區塊 (圖一的部分)
     
     # 顯示表格
     st.subheader(f"📋 ETF 概覽資訊 (共 {len(df)} 檔 | 顯示範圍: {time_period})")
@@ -183,6 +185,23 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
         elif "報酬率" in col or "波動度" in col:
             column_config[col] = st.column_config.NumberColumn(col, format="%.2f%%", width="small")
     
+    # 建立顯示用的副本
+    df_display = df[display_columns].copy()
+
+    # 定義格式化邏輯
+    target_format_cols = [
+        '1年報酬率(%)', '3年報酬率(%)', '10年報酬率(%)',
+        '1年波動度(%)', '3年波動度(%)', '10年波動度(%)'
+    ]
+    
+    for col in target_format_cols:
+        if col in df_display.columns:
+            # 僅針對顯示副本進行字串轉換
+            df_display[col] = pd.to_numeric(df_display[col], errors='coerce').map(
+                lambda x: f"{x:.2f}%" if pd.notnull(x) else "-"
+            )
+
+    # 顯示表格 (使用副本)
     st.dataframe(
         df_display,
         use_container_width=True,

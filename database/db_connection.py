@@ -12,46 +12,48 @@ from database import SessionLocal
 # ================================
 
 def get_etf_overview(region=None, min_return_1y=None, max_expense_ratio=None, 
-                     etf_ids=None, sort_by='ETF代號', ascending=True):
+                     etf_ids=None, sort_by='ETF代號', ascending=True, 
+                     time_period='不限'):
     """
-    獲取 ETF 概覽資訊 (直接從資料庫查詢)
-    
-    Args:
-        region (str, optional): 地區篩選 ('TW' 或 'US')
-        min_return_1y (float, optional): 最低1年報酬率 (例如: 0.1 代表 10%)
-        max_expense_ratio (float, optional): 最高管理費 (例如: 0.5 代表 0.5%)
-        etf_ids (list, optional): 指定 ETF 代號列表
-        sort_by (str): 排序欄位
-        ascending (bool): 是否升序排序
-    
-    Returns:
-        DataFrame: ETF 概覽資料
+    獲取 ETF 概覽資訊 (已修正 SQL 語法)
     """
-    query = """
+    
+    # 1. 定義時間區間對應的 SQL 檢查欄位
+    period_map = {
+        "不限": {"check": "bt.cagr_1y", "vol": "bt.volatility_1y"},
+        "1年":  {"check": "bt.cagr_1y", "vol": "bt.volatility_1y"},
+        "3年":  {"check": "bt.cagr_3y", "vol": "bt.volatility_3y"},
+        "10年": {"check": "bt.cagr_10y", "vol": "bt.volatility_10y"}
+    }
+
+    # 取得當前區間要使用的欄位名稱，預設用 1y
+    target = period_map.get(time_period, period_map["不限"])
+    check_col = target["check"]
+    vol_col = target["vol"]
+
+    query = f"""
     SELECT 
         e.etf_id AS 'ETF代號',
         e.etf_name AS 'ETF名稱',
         e.expense_ratio AS '管理費(%)',
         e.inception_date AS '成立日',
-        
-        -- 成交量總和 (1/3/10年)
+
+        -- 成交量統計
         COALESCE(ROUND(vol.volume_1y, 0), 0) AS '1年成交量總和',
         COALESCE(ROUND(vol.volume_3y, 0), 0) AS '3年成交量總和',
         COALESCE(ROUND(vol.volume_10y, 0), 0) AS '10年成交量總和',
-        
-        -- 年化報酬率 (1/3/10年)
-        ROUND(COALESCE(bt.cagr_1y, 0) * 100, 2) AS '1年報酬率(%)',
-        ROUND(COALESCE(bt.cagr_3y, 0) * 100, 2) AS '3年報酬率(%)',
-        ROUND(COALESCE(bt.cagr_10y, 0) * 100, 2) AS '10年報酬率(%)',
-        
-        -- 年化波動度 (1/3/10年)
-        ROUND(COALESCE(bt.volatility_1y, 0) * 100, 2) AS '1年波動度(%)',
-        ROUND(COALESCE(bt.volatility_3y, 0) * 100, 2) AS '3年波動度(%)',
-        ROUND(COALESCE(bt.volatility_10y, 0) * 100, 2) AS '10年波動度(%)'
-        
-    FROM etfs e
+
+        -- 年化報酬率
+        ROUND(bt.cagr_1y * 100, 2) AS '1年報酬率(%)',
+        ROUND(bt.cagr_3y * 100, 2) AS '3年報酬率(%)',
+        ROUND(bt.cagr_10y * 100, 2) AS '10年報酬率(%)',
+
+        -- 年化波動度
+        ROUND(bt.volatility_1y * 100, 2) AS '1年波動度(%)',
+        ROUND(bt.volatility_3y * 100, 2) AS '3年波動度(%)',
+        ROUND(bt.volatility_10y * 100, 2) AS '10年波動度(%)'
     
-    -- 成交量統計
+    FROM etfs e
     LEFT JOIN (
         SELECT 
             etf_id,
@@ -61,9 +63,7 @@ def get_etf_overview(region=None, min_return_1y=None, max_expense_ratio=None,
         FROM etf_daily_prices
         GROUP BY etf_id
     ) vol ON e.etf_id = vol.etf_id
-    
-    -- 回測資料 (報酬率 + 波動度)
-    LEFT JOIN (
+    INNER JOIN (
         SELECT 
             etf_id,
             MAX(CASE WHEN label = '1y' THEN cagr END) AS cagr_1y,
@@ -75,18 +75,23 @@ def get_etf_overview(region=None, min_return_1y=None, max_expense_ratio=None,
         FROM etf_backtests
         GROUP BY etf_id
     ) bt ON e.etf_id = bt.etf_id
-    
+
     WHERE 1=1
+      -- 確保當前篩選的時間段有數據
+      AND {check_col} IS NOT NULL
+      
+      -- 動態檢查當前區間的波動度是否 <= 35%
+      AND {vol_col} <= 0.35
+      
+      -- 排除異常值
+      AND {vol_col} > 0
     """
     
     params = {}
-    
-    # 地區篩選
     if region:
         query += " AND e.region = :region"
         params['region'] = region
     
-    # ETF 代號篩選
     if etf_ids:
         placeholders = ','.join([f':etf_id_{i}' for i in range(len(etf_ids))])
         query += f" AND e.etf_id IN ({placeholders})"
