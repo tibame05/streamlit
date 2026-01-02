@@ -26,8 +26,10 @@ etf-dashboard/
 │   ├── app.py
 │   ├── __init__.py
 │   ├── pages/
-│   │   ├── overview.py          # 排行榜、散點圖
-│   │   └── simulator.py         # 投資模擬器
+│   │   ├── __init__.py
+│   │   ├── overview.py         # ETF 標的選擇
+│   │   ├── simulator.py        # ETF 投資模擬器
+│   │   └── trend.py            # 價格與成交量趨勢圖
 │   ├── .streamlit/
 │   │   └── secrets.toml
 ├── database/
