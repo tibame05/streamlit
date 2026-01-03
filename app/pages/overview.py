@@ -170,21 +170,6 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
     # 顯示表格
     st.subheader(f"📋 ETF 概覽資訊 (共 {len(df)} 檔 | 顯示範圍: {time_period})")
     
-    # 動態設定表格樣式
-    column_config = {
-        "ETF代號": st.column_config.TextColumn("ETF代號", width="small"),
-        "ETF名稱": st.column_config.TextColumn("ETF名稱", width="medium"),
-        "管理費(%)": st.column_config.NumberColumn("管理費(%)", format="%.2f%%", width="small"),
-        "成立日": st.column_config.DateColumn("成立日", format="YYYY-MM-DD", width="small"),
-    }
-    
-    # 根據顯示欄位動態加入配置
-    for col in display_columns:
-        if "成交量" in col:
-            column_config[col] = st.column_config.NumberColumn(col, format="%d", width="medium")
-        elif "報酬率" in col or "波動度" in col:
-            column_config[col] = st.column_config.NumberColumn(col, format="%.2f%%", width="small")
-    
     # 建立顯示用的副本
     df_display = df[display_columns].copy()
 
@@ -201,6 +186,21 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
                 lambda x: f"{x:.2f}%" if pd.notnull(x) else "-"
             )
 
+    # 動態設定表格樣式
+    column_config = {
+        "ETF代號": st.column_config.TextColumn("ETF代號", width="small"),
+        "ETF名稱": st.column_config.TextColumn("ETF名稱", width="medium"),
+        "管理費(%)": st.column_config.NumberColumn("管理費(%)", format="%.2f%%", width="small"),
+        "成立日": st.column_config.DateColumn("成立日", format="YYYY-MM-DD", width="small"),
+    }
+    
+    # 根據顯示欄位動態加入配置
+    for col in display_columns:
+        if "成交量" in col:
+            column_config[col] = st.column_config.NumberColumn(col, format="%d", width="medium")
+        elif "報酬率" in col or "波動度" in col:
+            column_config[col] = st.column_config.TextColumn(col, width="small")
+    
     # 顯示表格 (使用副本)
     st.dataframe(
         df_display,
