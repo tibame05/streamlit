@@ -123,6 +123,12 @@ if st.sidebar.button("繪製圖表", type="primary", use_container_width=True):
             # 美股習慣相反，這裡示範台股習慣，您可依需求調整
             colors = dict(increasing_line_color='#ef5350', decreasing_line_color='#26a69a')
             
+            # 建立 hover text
+            hover_text = [
+                f"高: {h:.2f}<br>低: {l:.2f}<br>開: {o:.2f}<br>收: {c:.2f}"
+                for h, l, o, c in zip(df_final['high'], df_final['low'], df_final['open'], df_final['close'])
+            ]
+
             fig.add_trace(
                 go.Candlestick(
                     x=df_final.index,
@@ -131,16 +137,10 @@ if st.sidebar.button("繪製圖表", type="primary", use_container_width=True):
                     low=df_final['low'],
                     close=df_final['close'],
                     name='K 線',
-                    increasing_line_color=colors['increasing_line_color'],
-                    decreasing_line_color=colors['decreasing_line_color'],
-                    # [修正] 使用三引號定義 hovers template，語法更穩定
-                    hovertemplate="""
-                        高: %{high:.2f}<br>
-                        低: %{low:.2f}<br>
-                        開: %{open:.2f}<br>
-                        收: %{close:.2f}<br>
-                        <extra></extra>
-                    """
+                    increasing=dict(line=dict(color=colors['increasing_line_color'])),
+                    decreasing=dict(line=dict(color=colors['decreasing_line_color'])),
+                    text=hover_text,
+                    hoverinfo='text'
                 ),
                 row=1, col=1
             )
