@@ -1,6 +1,13 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import sys
+import os
+
+# 將專案根目錄加入 sys.path
+# 使用 insert(0, ...) 確保優先搜尋專案根目錄
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
 from database.db_connection import get_etf_overview
 from utils.log import get_logger
 

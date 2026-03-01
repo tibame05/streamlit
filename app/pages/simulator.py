@@ -1,16 +1,24 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta # 用於更精確的日期計算
 
+import sys
+import os
+
+# 將專案根目錄加入 sys.path
+# 使用 insert(0, ...) 確保優先搜尋專案根目錄
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
 # backtest.py 檔案頂部
-from database.db_connection import get_etf_list_by_region, get_etf_backtest_metrics
+from database.db_connection import get_etf_list_by_region, get_etf_backtest_metrics, get_etf_prices
 
 
 # 假設這些函式已在 db_connection.py 中
-# from database.db_connection import get_etf_list_by_region, get_etf_backtest_metrics 
+# from database.db_connection import get_etf_list_by_region, get_etf_backtest_metrics, get_etf_prices 
 
 st.set_page_config(page_title="投資模擬器", page_icon="💰", layout="wide")
 
@@ -157,6 +165,97 @@ if st.session_state.get('run_backtest_metrics', False):
     col5.metric("夏普比率 (Sharpe Ratio)", f"{metrics['sharpe_ratio']:.2f}")
     col6.metric("年化波動度", f"{db_volatility_pct:.2f}%")
     col7.metric("最大回撤 (Max Drawdown)", f"{db_max_drawdown_pct:.2f}%")
+
+    st.markdown("---")
+
+    # --- 繪製資產成長曲線 ---
+    st.subheader("📈 資產與成本成長曲線")
+    
+    # 計算日期區間 (為了抓取股價繪圖)
+    end_date = datetime.now().date()
+    start_date = end_date - relativedelta(years=years)
+    
+    with st.spinner(f"正在載入 {selected_etf_id} 歷史股價以繪製圖表..."):
+        price_df = get_etf_prices(selected_etf_id, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
+
+    if not price_df.empty:
+        price_df = price_df.set_index("trade_date").sort_index()
+        dates = price_df.index
+        
+        portfolio_history = []
+        invested_history = []
+        
+        # --- 僅為了繪圖而執行的模擬邏輯 ---
+        if investment_type == "一次性投入":
+            initial_price = price_df.iloc[0]['adj_close']
+            shares = investment_amount / initial_price
+            portfolio_values = price_df['adj_close'] * shares
+            portfolio_history = portfolio_values.values
+            invested_history = [investment_amount] * len(dates)
+            
+        else: # 定期定額
+            monthly_dates = price_df.resample("MS").first().index
+            temp_df = price_df.copy()
+            temp_df['shares_bought'] = 0.0
+            temp_df['cash_flow'] = 0.0
+            
+            for m_date in monthly_dates:
+                d = temp_df.index[temp_df.index >= m_date]
+                if not d.empty:
+                    invest_date = d[0]
+                    price = temp_df.loc[invest_date, 'adj_close']
+                    bought = investment_amount / price
+                    temp_df.at[invest_date, 'shares_bought'] = bought
+                    temp_df.at[invest_date, 'cash_flow'] = investment_amount
+            
+            temp_df['cum_shares'] = temp_df['shares_bought'].cumsum()
+            temp_df['cum_invested'] = temp_df['cash_flow'].cumsum()
+            temp_df['portfolio_value'] = temp_df['cum_shares'] * temp_df['adj_close']
+            
+            temp_df['portfolio_value'] = temp_df['portfolio_value'].fillna(0)
+            temp_df['cum_invested'] = temp_df['cum_invested'].fillna(0)
+    
+            portfolio_history = temp_df['portfolio_value'].values
+            invested_history = temp_df['cum_invested'].values
+            
+        # --- 繪圖 ---
+        fig_wealth = go.Figure()
+        
+        # 資產價值線
+        fig_wealth.add_trace(go.Scatter(
+            x=dates, 
+            y=portfolio_history, 
+            mode='lines', 
+            name='資產總值', 
+            line=dict(color='#00CC96', width=2)
+        ))
+        
+        # 投入成本線
+        fig_wealth.add_trace(go.Scatter(
+            x=dates, 
+            y=invested_history, 
+            mode='lines', 
+            name='投入成本', 
+            line=dict(color='#EF553B', dash='dash', width=2)
+        ))
+        
+        fig_wealth.update_layout(
+            title=f"<b>{selected_etf_id} 投資成長模擬 ({time_period})</b>",
+            xaxis_title="日期",
+            yaxis_title=f"金額 ({currency})",
+            height=450,
+            hovermode="x unified",
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            )
+        )
+        st.plotly_chart(fig_wealth, use_container_width=True)
+    else:
+        st.warning("⚠️ 無法取得詳細價格數據，無法繪製成長曲線。")
     
     # 重設狀態
     st.session_state.run_backtest_metrics = False

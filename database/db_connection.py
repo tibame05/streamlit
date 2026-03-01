@@ -306,16 +306,46 @@ def get_etf_backtest_metrics(etf_id: str, label: str) -> Dict:
 def get_etf_summary() -> pd.DataFrame:
     """
     讀取 ETF 摘要資料，用於總覽頁面。
+    從 etfs, etf_backtests, etf_daily_prices 關聯查詢。
     
     returns:
         pd.DataFrame: ETF 摘要資料，包含 etf_id, name, region, expense_ratio, 
                      inception_date, volume, annual_return_3y, volatility_3y
     """
+
     query = """
-        SELECT etf_id, name, region, expense_ratio, 
-               inception_date, volume, 
-               annual_return_3y, volatility_3y
-        FROM etf_summary
+        SELECT 
+            e.etf_id,
+            e.etf_name AS name,
+            e.region,
+            e.expense_ratio,
+            e.inception_date,
+            
+            -- 使用近一年成交量總和作為 volume 代表
+            COALESCE(vol.volume_1y, 0) AS volume,
+            
+            -- 3年年化報酬率 (轉換為百分比)
+            ROUND(bt.cagr * 100, 2) AS annual_return_3y,
+            
+            -- 3年波動度 (轉換為百分比)
+            ROUND(bt.volatility * 100, 2) AS volatility_3y
+            
+        FROM etfs e
+        
+        -- 關聯近一年成交量
+        LEFT JOIN (
+            SELECT 
+                etf_id, 
+                SUM(volume) as volume_1y 
+            FROM etf_daily_prices 
+            WHERE trade_date >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR) 
+            GROUP BY etf_id
+        ) vol ON e.etf_id = vol.etf_id
+        
+        -- 關聯 3 年回測數據
+        LEFT JOIN etf_backtests bt ON e.etf_id = bt.etf_id AND bt.label = '3y'
+        
+        WHERE e.status = 'ACTIVE'
         ORDER BY volume DESC
     """
     try:
