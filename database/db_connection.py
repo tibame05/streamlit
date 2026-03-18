@@ -13,7 +13,7 @@ from database import SessionLocal
 
 def get_etf_overview(region=None, min_return_1y=None, max_expense_ratio=None, 
                      etf_ids=None, sort_by='ETF代號', ascending=True, 
-                     time_period='不限'):
+                     time_period='不限', exclude_outliers=False):
     """
     獲取 ETF 概覽資訊 (已修正 SQL 語法)
     """
@@ -80,14 +80,15 @@ def get_etf_overview(region=None, min_return_1y=None, max_expense_ratio=None,
       -- 確保當前篩選的時間段有數據
       AND {check_col} IS NOT NULL
       
-      -- 動態檢查當前區間的波動度是否 <= 35%
-      AND {vol_col} <= 0.35
-      
       -- 排除異常值
       AND {vol_col} > 0
     """
     
     params = {}
+
+    if exclude_outliers:
+        query += f" AND {vol_col} <= 0.30" # 波動度小於等於 30%
+
     if region:
         query += " AND e.region = :region"
         params['region'] = region

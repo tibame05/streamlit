@@ -9,6 +9,21 @@ from dateutil.relativedelta import relativedelta # 用於更精確的日期計�
 import sys
 import os
 
+# 設定頁面樣式：移除表單邊框
+st.markdown(
+    """
+    <style>
+    [data-testid="stForm"] {
+        border: none;
+        padding: 0;
+        background-color: transparent;
+        box-shadow: none;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 # 將專案根目錄加入 sys.path
 # 使用 insert(0, ...) 確保優先搜尋專案根目錄
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -20,7 +35,7 @@ from database.db_connection import get_etf_list_by_region, get_etf_backtest_metr
 # 假設這些函式已在 db_connection.py 中
 # from database.db_connection import get_etf_list_by_region, get_etf_backtest_metrics, get_etf_prices 
 
-st.set_page_config(page_title="投資模擬器", page_icon="💰", layout="wide")
+#st.set_page_config(page_title="投資模擬器", page_icon="💰", layout="wide")
 
 st.title("💰 ETF 投資模擬器")
 st.markdown("---")
@@ -40,12 +55,13 @@ PERIOD_LABEL_MAP = {
 # ==============================
 # 1. 側邊欄 - 篩選條件
 # ==============================
+# 側邊欄標題
+st.sidebar.header("⚙️ 回測參數設定")
 
-with st.sidebar:
-    st.header("⚙️ 回測參數設定")
+# 地區選擇
+region = st.sidebar.selectbox("地區篩選", options=["TW", "US"], index=0)
 
-    region = st.selectbox("地區篩選", options=["TW", "US"], index=0)
-
+with st.sidebar.form(key='backtest_form'):
     # ETF 代號篩選
     etf_list = get_etf_list_by_region(region)
     if etf_list:
@@ -68,33 +84,38 @@ with st.sidebar:
     
     # 投入金額 (依地區變換貨幣)
     currency = "TWD" if region == "TW" else "USD"
+    default_amount = 100000 if region == "TW" else 3000
     
-    if investment_type == "一次性投入":
-        amount_label = f"投入金額 (Lump Sum) ({currency})"
-        default_amount = 100000 if region == "TW" else 3000
-    else:
-        # 定期定額時，金額指每月投入金額
-        amount_label = f"每月投入金額 ({currency})"
-        default_amount = 5000 if region == "TW" else 100
-        
     investment_amount = st.number_input(
-        amount_label,
+        f"投入金額 ({currency})",
         min_value=1,
         value=default_amount,
         step=1000,
         format="%d"
     )
     
-    st.markdown("---")
-    
-    # 初始化 session_state
-    if 'run_backtest_metrics' not in st.session_state:
-        st.session_state.run_backtest_metrics = False
-        
-    if st.button("📈 開始回測", type="primary", use_container_width=True):
-        st.session_state.run_backtest_metrics = True
-    
+    # 必須使用 st.form_submit_button 才能提交表單
+    submit_button = st.form_submit_button(
+        label="💰 開始回測", 
+        type="primary", 
+        use_container_width=True
+    )
 
+# ==============================
+
+# 判斷是否按下按鈕
+if submit_button:
+    # 將按鈕按下那一刻的所有參數存入 session_state
+    st.session_state.run_backtest_metrics = True
+    st.session_state.params = {
+        'region': region,
+        'selected_etf_id': selected_etf_str.split(" ")[0],
+        'investment_type': investment_type,
+        'time_period': time_period,
+        'investment_amount': investment_amount,
+        'currency': currency
+    }
+    
 # ==============================
 # 2. 回測核心邏輯與結果顯示
 # ==============================
@@ -259,3 +280,6 @@ if st.session_state.get('run_backtest_metrics', False):
     
     # 重設狀態
     st.session_state.run_backtest_metrics = False
+
+else:
+    st.info("👈 請在左側選擇參數並點擊「💰 開始回測」")
