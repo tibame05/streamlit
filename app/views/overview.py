@@ -56,7 +56,7 @@ time_period = st.sidebar.selectbox(
     options=["不限", "1年", "3年", "10年"],
     index=0,
     key="time_period_selector", # 加上 key 確保狀態穩定
-    help="留空則顯示全部"
+    help="選擇要顯示的資料時間範圍"
 )
 
 # 參數設定：將判斷邏輯封裝成一個函式，放在 Form 外部
@@ -96,7 +96,7 @@ with st.sidebar.form(key='filter_form'):
         "選擇 ETF 代號 (可多選)",
         options=all_etf_ids,
         default=None,
-        placeholder="請選擇 ETF 代號 (可搜尋)",
+        placeholder="可搜尋 ETF 代號",
         help="留空則顯示全部"
     )
 
@@ -118,7 +118,7 @@ with st.sidebar.form(key='filter_form'):
     )
 
     # 查詢按鈕
-    submit_button = st.form_submit_button("🔄 查詢", type="primary", use_container_width=True)
+    submit_button = st.form_submit_button("🔄 查詢", type="primary", width="stretch")
 
 # ==============================
 
@@ -221,7 +221,7 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
     # 顯示表格 (使用副本)
     st.dataframe(
         df_display,
-        use_container_width=True,
+        width="stretch",
         column_config=column_config,
         hide_index=True
     )
@@ -233,7 +233,7 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
         data=csv,
         file_name=f"etf_overview_{time_period}.csv",
         mime="text/csv",
-        use_container_width=True
+        width="stretch"
     )
 
     st.markdown("---")
@@ -241,7 +241,7 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
     # 詳細統計：改為顯示各項指標之最 (圖二的部分)
     st.markdown("# **🏆 各指標之最**")
 
-    with st.expander("## **🏆 查看各項指標之最 (詳細統計)**", expanded=True):
+    with st.expander(" **🏆 查看各項指標之最 (詳細統計)**", expanded=True):
         
         # 輔助函式：取得特定欄位的最佳 ETF
         def get_best_etf_info(dataframe, col_name, method='max'):
@@ -302,13 +302,8 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
         # 版面配置：4欄 (管理費, 成交量, 報酬率, 波動度)
         col1, col2, col3, col4 = st.columns(4)
         
-        # --- 1. 管理費 (永遠顯示) ---
+        # --- 1. 成交量 ---
         with col1:
-            st.markdown("#### 💰 最低管理費")
-            st.info(get_best_etf_info(df, "管理費(%)", method='min'))
-
-        # --- 2. 成交量 ---
-        with col2:
             st.markdown("#### 📊 最高成交量")
             for p in periods:
                 label = f"{p}最高成交量"
@@ -316,8 +311,8 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
                 st.markdown(f"**{p}**")
                 st.success(get_best_etf_info(df, col_target, method='max'))
 
-        # --- 3. 報酬率 ---
-        with col3:
+        # --- 2. 報酬率 ---
+        with col2:
             st.markdown("#### 🚀 最高報酬率")
             for p in periods:
                 col_target = f"{p}報酬率(%)"
@@ -325,13 +320,18 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
                 # 使用 error 顏色 (紅色) 代表高報酬通常比較顯眼，或維持預設
                 st.error(get_best_etf_info(df, col_target, method='max'))
 
-        # --- 4. 波動度 ---
-        with col4:
+        # --- 3. 波動度 ---
+        with col3:
             st.markdown("#### 🛡️ 最低波動度")
             for p in periods:
                 col_target = f"{p}波動度(%)"
                 st.markdown(f"**{p}**")
                 st.warning(get_best_etf_info(df, col_target, method='min'))
+
+        # --- 4. 管理費 (永遠顯示) ---
+        with col4:
+            st.markdown("#### 💰 最低管理費")
+            st.info(get_best_etf_info(df, "管理費(%)", method='min'))
 
     st.markdown("---")
 
@@ -437,7 +437,7 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
                 fig.update_xaxes(title_font=dict(color='black'), tickfont=dict(color='black'))
                 fig.update_yaxes(title_font=dict(color='black'), tickfont=dict(color='black'))
                 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             else:
                 st.warning(f"⚠️ 排除離群值後，無足夠的 {target_period} 數據可繪製氣泡圖。")
         else:

@@ -72,7 +72,7 @@ with st.sidebar.form(key='trend_filter_form'):
     end_date = col2.date_input("結束日期", default_end).strftime("%Y-%m-%d")
 
     # --- 提交按鈕 ---
-    submit_button = st.form_submit_button("📈 繪製圖表", type="primary", use_container_width=True)
+    submit_button = st.form_submit_button("📈 繪製圖表", type="primary", width="stretch")
 
 # ==============================
 # 2. 資料讀取與處理
@@ -104,7 +104,7 @@ if submit_button:
                 })
             elif "月" in time_scale:
                 # 'M' 代表月底結算
-                df_resampled = df.resample('M').agg({
+                df_resampled = df.resample('ME').agg({
                     'open': 'first',
                     'high': 'max',
                     'low': 'min',
@@ -264,7 +264,7 @@ if submit_button:
             fig.update_yaxes(title_text="成交量", row=2, col=1)
 
             # 顯示圖表
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
 else:
     st.info("👈 請在左側選擇條件並點擊「📈 繪製圖表」")

@@ -98,7 +98,7 @@ with st.sidebar.form(key='backtest_form'):
     submit_button = st.form_submit_button(
         label="💰 開始回測", 
         type="primary", 
-        use_container_width=True
+        width="stretch"
     )
 
 # ==============================
@@ -274,7 +274,7 @@ if st.session_state.get('run_backtest_metrics', False):
                 x=1
             )
         )
-        st.plotly_chart(fig_wealth, use_container_width=True)
+        st.plotly_chart(fig_wealth, width="stretch")
     else:
         st.warning("⚠️ 無法取得詳細價格數據，無法繪製成長曲線。")
     
