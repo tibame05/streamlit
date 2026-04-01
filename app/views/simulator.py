@@ -61,7 +61,7 @@ st.sidebar.header("⚙️ 回測參數設定")
 # 地區選擇
 region = st.sidebar.selectbox("地區篩選", options=["TW", "US"], index=0)
 
-with st.sidebar.form(key='backtest_form'):
+with st.sidebar.form(key='backtest_form', enter_to_submit=False):
     # ETF 代號篩選
     etf_list = get_etf_list_by_region(region)
     if etf_list:
