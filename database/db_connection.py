@@ -125,9 +125,17 @@ def get_etf_overview(region=None, min_return_1y=None, max_expense_ratio=None,
 
 def get_etf_list_by_region(region: str) -> list:
     """
-    根據地區取得 ETF 代號列表 (用於下拉選單)
+    根據地區取得 ETF 代號列表，且僅限於在 etf_backtests 中有資料的標的
+    (這能確保該標的至少已成立一年以上)
     """
-    query = text("SELECT etf_id, etf_name FROM etfs WHERE region = :region AND status = 'ACTIVE' ORDER BY etf_id")
+    query = text("""
+        SELECT DISTINCT e.etf_id, e.etf_name 
+        FROM etfs e
+        INNER JOIN etf_backtests b ON e.etf_id = b.etf_id
+        WHERE e.region = :region 
+          AND e.status = 'ACTIVE' 
+        ORDER BY e.etf_id
+    """)
     try:
         with engine.connect() as conn:
             result = conn.execute(query, {"region": region})

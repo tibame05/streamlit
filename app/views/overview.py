@@ -8,6 +8,7 @@ import os
 st.markdown(
     """
     <style>
+    /* 1. 移除表單邊框 */
     [data-testid="stForm"] {
         border: none;
         padding: 0;
@@ -180,9 +181,14 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
     # 建立顯示用的副本
     df_display = df[display_columns].copy()
 
+    # 先將成交量欄位改名
+    volume_rename_map = {col: col + " (百萬)" for col in df_display.columns if "成交量" in col}
+    df_display = df_display.rename(columns=volume_rename_map)
+
     # 處理排序
-    if current_sort_by in df_display.columns:
-        sort_temp = pd.to_numeric(df_display[current_sort_by], errors='coerce')
+    actual_sort_by = current_sort_by + " (百萬)" if "成交量" in current_sort_by else current_sort_by
+    if actual_sort_by in df_display.columns:
+        sort_temp = pd.to_numeric(df_display[actual_sort_by], errors='coerce')
         df_display = df_display.loc[sort_temp.sort_values(ascending=current_ascending).index].reset_index(drop=True)
     
     # 定義格式化邏輯
@@ -212,9 +218,10 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
     }
     
     # 根據顯示欄位動態加入配置
-    for col in display_columns:
+    for col in df_display.columns:
         if "成交量" in col:
-            column_config[col] = st.column_config.NumberColumn(col, format="%d", width="medium")
+            df_display[col] = pd.to_numeric(df_display[col], errors='coerce') / 1_000_000
+            column_config[col] = st.column_config.NumberColumn(col, format="%,.3f", width="medium")
         elif "報酬率" in col or "波動度" in col:
             column_config[col] = st.column_config.TextColumn(col, width="small")
     
@@ -283,7 +290,7 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
                 if "報酬率" in col_name or "波動度" in col_name or "管理費" in col_name:
                     val_str = f"{float(val):.2f}%"
                 elif "成交量" in col_name:
-                    val_str = f"{int(val):,}" # 加千分位
+                    val_str = f"{float(val)/1_000_000:,.2f} (百萬)"
                 else:
                     val_str = str(val)
                 
@@ -341,7 +348,7 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
 
     # 準備繪圖資料
     if not df.empty:
-        # 1. 決定要畫哪一個時間區段的資料（若側邊欄選 "不限"，依據您的需求預設使用 "10年" 資料）
+        # 1. 決定要畫哪一個時間區段的資料
         if time_period == "不限":
             target_period = "10年"
         else:
@@ -350,39 +357,33 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
         # 2. 定義對應的欄位名稱
         col_x = f"{target_period}波動度(%)"
         col_y = f"{target_period}報酬率(%)"
-        col_size = f"{target_period}成交量總和"
+        col_size = f"{target_period}成交量總和 (百萬)"
         
         # 3. 檢查欄位是否存在 (安全防護)
         if col_x in df.columns and col_y in df.columns:
             st.markdown(f"### **ETF 風險與報酬分析 ({target_period})**")
             
             # 複製一份資料作繪圖用
-            chart_df = df.copy()
+            chart_df = df_display.copy()
+
+            # 將字串轉回數字進行繪圖
+            for c in [col_x, col_y]:
+                if chart_df[c].dtype == object:
+                    chart_df[c] = pd.to_numeric(chart_df[c].str.replace('%', ''), errors='coerce')
+            
+            if chart_df[col_size].dtype == object:
+                chart_df[col_size] = pd.to_numeric(chart_df[col_size].str.replace(',', ''), errors='coerce')
             
             # 執行過濾：只保留波動度 <= 30% 且 > 0 的資料 (排除離群值)
-            # 因為 df[col_x] 已經轉為百分比 (例如 24.5)，所以要判斷 <= 30
             chart_df = chart_df[
-                (chart_df[col_x] <= 30) & 
-                (chart_df[col_x] > 0)
+                (chart_df[col_x] <= 30) & (chart_df[col_x] > 0)
             ].dropna(subset=[col_x, col_y])
 
-            # 資料清洗與百分比換算
-            # 先確保成交量欄位轉為純數字 (移除逗號，處理字串)
-            chart_df[col_size] = (
-                chart_df[col_size]
-                .astype(str)                # 先轉字串確保 replace 可用
-                .str.replace(',', '')       # 移除千分位逗號
-            )
-            chart_df[col_size] = pd.to_numeric(chart_df[col_size], errors='coerce').fillna(0)
-
-            # 2. 計算百分比 (建立新欄位用於 size，原欄位保留用於 hover 顯示數值)
+            # 4. 計算氣泡縮放 (使用已經是百萬單位的數值)
             max_vol = chart_df[col_size].max()
-            if max_vol > 0:
-                chart_df['size_scaled'] = (chart_df[col_size] / max_vol) * 100
-            else:
-                chart_df['size_scaled'] = 0
-
-            # 4. 建立 Plotly 氣泡圖
+            chart_df['size_scaled'] = (chart_df[col_size] / max_vol * 100) if max_vol > 0 else 0
+            
+            # 5. 建立 Plotly 氣泡圖
             if not chart_df.empty:
                 fig = px.scatter(
                     chart_df,
@@ -394,16 +395,16 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
                     hover_data={
                         "ETF代號": True,
                         'size_scaled': False, # 隱藏百分比欄位
-                        col_x: True, 
-                        col_y: True, 
-                        col_size: True        # 顯示原本的成交量數值
+                        col_x: ':.2f', 
+                        col_y: ':.2f', 
+                        col_size: ':,.2f'      # 顯示成交量數值 (百萬)
                     },
                     title=None,
                     text="ETF代號",         # 顯示代號標籤
                     labels={
                         col_x: "波動度 (風險) %",
                         col_y: "年化報酬率 %",
-                        col_size: "成交量",
+                        col_size: "成交量（百萬）",
                         "ETF代號": "代號"
                     },
                     size_max=60             # 限制氣泡最大尺寸

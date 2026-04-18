@@ -31,10 +31,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 # backtest.py 檔案頂部
 from database.db_connection import get_etf_list_by_region, get_etf_backtest_metrics, get_etf_prices
 
-
-# 假設這些函式已在 db_connection.py 中
-# from database.db_connection import get_etf_list_by_region, get_etf_backtest_metrics, get_etf_prices 
-
 #st.set_page_config(page_title="投資模擬器", page_icon="💰", layout="wide")
 
 st.title("💰 ETF 投資模擬器")
