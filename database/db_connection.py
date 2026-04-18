@@ -288,16 +288,14 @@ def get_etf_prices(etf_id: str, start_date: str, end_date: str) -> pd.DataFrame:
 
 def get_short_term_momentum(region="TW"):
     """
-    計算資料庫內最新兩週 (10個交易日) 的 ETF 漲跌動能
+    計算資料庫內最新兩週 (10個交易日) 的 ETF 漲跌動能指標
+    指標包含：期間報酬率、日均波動、勝率
     """
-    # 1. 取得所有該區域 ETF 的代號與名稱
-    # 這裡假設您已有 get_etf_list_by_region 邏輯
-    
-    # 2. 撰寫 SQL 抓取近 15 天的價格 (多抓幾天以確保有 10 個交易日)
+    # 撰寫 SQL 抓取近 15 天的價格 (多抓幾天以確保有 10 個交易日)
     query = text("""
-        SELECT etf_id, trade_date, adj_close
+        SELECT etf_id, trade_date, adj_close, volume
         FROM (
-            SELECT etf_id, trade_date, adj_close,
+            SELECT etf_id, trade_date, adj_close, volume,
                    ROW_NUMBER() OVER (PARTITION BY etf_id ORDER BY trade_date DESC) as rn
             FROM etf_daily_prices
             WHERE etf_id IN (SELECT etf_id FROM etfs WHERE region = :region)
@@ -317,48 +315,47 @@ def get_short_term_momentum(region="TW"):
         
         # 對每一檔 ETF 進行分組計算
         for etf_id, group in df.groupby('etf_id'):
-            # 確保是由新到舊排序
-            group = group.sort_values('trade_date', ascending=False).reset_index(drop=True)
+            # 確保排序正確 (由舊到新)
+            group = group.sort_values('trade_date', ascending=True).reset_index(drop=True)
             
-            # 關鍵修改：檢查是否有至少 11 筆資料 (t0 到 t10 共 11 個點)
-            if len(group) < 11:
-                continue 
+            # 確保有足夠的資料點計算變動 (11點才能產生10個變動區間)
+            if len(group) < 11: continue 
+            target_group = group.tail(11).reset_index(drop=True)
             
-            t0_row = group.iloc[0]   # 最新一筆
-            t10_row = group.iloc[10] # 10個交易日前
-
-            # 取最新的一筆 (index 0) 與 10 個交易日前的一筆 (index 10)
-            t0_price = float(group.iloc[0]['adj_close'])
-            t10_price = float(group.iloc[10]['adj_close'])
+            # 取得用於計算的價格序列
+            prices = target_group['adj_close'].astype(float)
+            daily_returns = prices.pct_change().dropna() 
             
-            # 1. 計算兩週報酬率與金額變動
-            change_abs = t0_price - t10_price
-            return_2w = (t0_price - t10_price) / t10_price
+            # 取出 14 日前(第1筆)與最新(最後1筆)價格
+            start_price = float(prices.iloc[0])
+            latest_price = float(prices.iloc[-1])
             
-            # 2. 計算「年化」報酬率
-            # 公式：((1 + 兩週報酬率) ^ (一年交易日252 / 區間交易日10)) - 1
-            ann_return = ((1 + return_2w) ** (252 / 10)) - 1
-
-            # 3. 計算「年化」波動度
-            # 取出這 10 天的日報酬率 (需由舊到新計算 pct_change)
-            prices_subset = group['adj_close'].apply(float).head(11).iloc[::-1] 
-            daily_returns = prices_subset.pct_change().dropna()
-            # 日標準差 * sqrt(252) 得到年化波動度
-            ann_volatility = daily_returns.std() * np.sqrt(252)
+            # --- 指標計算 ---
+            # 1. 期間報酬率 (Total 2-Week Return)
+            return_pct = (latest_price - start_price) / start_price
+            
+            # 2. 日均波動 (Daily Volatility)
+            daily_vol = daily_returns.abs().mean()
+            
+            # 3. 勝率 (Winning Days Rate)
+            win_days = (daily_returns > 0).sum()
+            win_rate = win_days / len(daily_returns)
+            
+            # 修正重點 2: 計算 10 日平均成交量 (取出最後 10 筆交易日)
+            avg_vol = group['volume'].astype(float).tail(10).mean()
             
             results.append({
                 'etf_id': etf_id,
-                'start_date': t10_row['trade_date'], # 起始日期
-                'latest_date': t0_row['trade_date'], # 最新日期
-                'latest_price': t0_price,
-                'change_abs': change_abs,
-                'return_pct': return_2w * 100,        # 兩週實際漲跌幅
-                'ann_return': ann_return * 100,      # 年化報酬率 (預估)
-                'ann_volatility': ann_volatility * 100 # 年化波動度
-            })
-            
-        return pd.DataFrame(results)
-    
+                'start_date': group.iloc[0]['trade_date'],
+                'start_price': start_price,          # 對應 analysis.py
+                'latest_date': group.iloc[-1]['trade_date'],
+                'latest_price': latest_price,        # 對應 analysis.py
+                'avg_volume': avg_vol,               # 對應 analysis.py
+                'return_pct': return_pct * 100,      
+                'daily_vol': daily_vol * 100,        
+                'win_rate': win_rate * 100
+            })            
+        return pd.DataFrame(results)    
     except Exception as e:
         logger.error(f"短期動能計算失敗: {e}")
         return pd.DataFrame()
