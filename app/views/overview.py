@@ -211,19 +211,19 @@ if 'df' in st.session_state and not st.session_state['df'].empty:
 
     # 動態設定表格樣式
     column_config = {
-        "ETF代號": st.column_config.TextColumn("ETF代號", width="small"),
-        "ETF名稱": st.column_config.TextColumn("ETF名稱", width="medium"),
-        "管理費(%)": st.column_config.TextColumn("管理費(%)", width="small"),
-        "成立日": st.column_config.DateColumn("成立日", format="YYYY-MM-DD", width="small"),
+        "ETF代號": st.column_config.TextColumn("ETF代號", width="stretch"),
+        "ETF名稱": st.column_config.TextColumn("ETF名稱", width="stretch"),
+        "管理費(%)": st.column_config.TextColumn("管理費(%)", width="stretch"),
+        "成立日": st.column_config.DateColumn("成立日", format="YYYY-MM-DD", width="stretch"),
     }
     
     # 根據顯示欄位動態加入配置
     for col in df_display.columns:
         if "成交量" in col:
             df_display[col] = pd.to_numeric(df_display[col], errors='coerce') / 1_000_000
-            column_config[col] = st.column_config.NumberColumn(col, format="%,.3f", width="medium")
+            column_config[col] = st.column_config.NumberColumn(col, format="%,.2f", width="stretch")
         elif "報酬率" in col or "波動度" in col:
-            column_config[col] = st.column_config.TextColumn(col, width="small")
+            column_config[col] = st.column_config.TextColumn(col, width="stretch")
     
     # 顯示表格 (使用副本)
     st.dataframe(

@@ -110,12 +110,12 @@ def display_momentum_tables(region):
         col_cfg = {
             "排名": st.column_config.TextColumn("No.", width=None),
             "etf_id": "ETF 代號",
-            "start_price": st.column_config.NumberColumn(f"最初價({start_d})", format=f"%.2f{currency}"),
-            "latest_price": st.column_config.NumberColumn(f"最新價({end_d})", format=f"%.2f{currency}"),
-            "avg_volume": st.column_config.NumberColumn("10日均量", format="%,d"),
-            "return_pct": st.column_config.NumberColumn("10日報酬"),
+            "start_price": st.column_config.NumberColumn(f"最初價({start_d})", format=f"%.2f {currency}", width="stretch"),
+            "latest_price": st.column_config.NumberColumn(f"最新價({end_d})", format=f"%.2f {currency}", width="stretch"),
+            "avg_volume": st.column_config.NumberColumn("10日均量", format="%,d", width="stretch"),
+            "return_pct": st.column_config.NumberColumn("10日報酬", width="stretch"),
             "daily_vol": "日均波動",
-            "win_rate": st.column_config.ProgressColumn("勝率", format="%.0f%%", min_value=0, max_value=100)
+            "win_rate": st.column_config.ProgressColumn("勝率", format="%.0f%%", min_value=0, max_value=100, width="stretch")
         }
         
         display_cols = ['排名', 'etf_id', 'start_price', 'latest_price', 'avg_volume', 'return_pct', 'daily_vol', 'win_rate']
