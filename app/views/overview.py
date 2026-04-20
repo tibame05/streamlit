@@ -44,20 +44,21 @@ st.sidebar.header("🔍 篩選條件")
 st.sidebar.subheader("地區篩選")
 
 region = st.sidebar.selectbox(
-    "地區（單選）",
+    "地區篩選",
     options=["不限", "TW", "US"],
-    index=1  # 預設選擇 TW
+    index=1,  # 預設選擇 TW
+    help="單選"
 )
 region_value = None if region == "不限" else region
 
 # ===== 2. 時間範圍篩選 =====
 st.sidebar.subheader("時間範圍篩選")
 time_period = st.sidebar.selectbox(
-    "顯示時間範圍（單選）",
+    "顯示時間範圍",
     options=["不限", "1年", "3年", "10年"],
     index=0,
     key="time_period_selector", # 加上 key 確保狀態穩定
-    help="選擇要顯示的資料時間範圍"
+    help="單選"
 )
 
 # 參數設定：將判斷邏輯封裝成一個函式，放在 Form 外部
@@ -94,11 +95,11 @@ with st.sidebar.form(key='filter_form'):
 
     # 多選下拉選單 (可搜尋)
     selected_etf_ids = st.multiselect(
-        "選擇 ETF 代號 (可多選)",
+        "ETF 代碼篩選",
         options=all_etf_ids,
         default=None,
         placeholder="可搜尋 ETF 代號",
-        help="留空則顯示全部"
+        help="可多選，留空則顯示全部"
     )
 
     etf_ids = selected_etf_ids if selected_etf_ids else None
