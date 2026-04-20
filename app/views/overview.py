@@ -29,7 +29,9 @@ from utils.log import get_logger
 
 logger = get_logger("overview")
 
-#st.set_page_config(page_title="標的選擇", page_icon="📊", layout="wide")
+# 分頁標題
+#st.set_page_config(page_title="ETF 標的選擇", page_icon="📊", layout="wide")
+st.html(f"<script>parent.document.title = 'ETF 標的選擇'</script>")
 
 # 載入資料
 df = get_etf_overview()

@@ -2,6 +2,16 @@ import streamlit as st
 import pandas as pd
 from database.db_connection import get_short_term_momentum
 
+import sys
+import os
+
+# 使用 insert(0, ...) 確保優先搜尋專案根目錄
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+# 分頁標題
+#st.set_page_config(page_title="ETF 短期快訊", page_icon="🔥", layout="wide")
+st.html(f"<script>parent.document.title = 'ETF 短期快訊'</script>")
+
 def show_momentum_analysis():
     st.markdown("# **🔥 ETF 短期動能快訊 (近兩週)**")
 
@@ -145,7 +155,5 @@ def display_momentum_tables(region):
     else:
         st.warning(f"⚠️ 目前無 {region} 的短期動能數據。")
 
-if __name__ == "__main__":
-    # 單獨測試此頁面
-    st.set_page_config(page_title="短期動能測試", layout="wide")
-    show_momentum_analysis()
+# 執行主函式
+show_momentum_analysis()

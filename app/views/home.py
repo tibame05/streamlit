@@ -3,12 +3,14 @@ import pandas as pd
 import plotly.express as px
 import sys
 import os
+from utils.log import get_logger
 
 # 將專案根目錄加入 sys.path 以便匯入 modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from database.db_connection import get_etf_summary
-from utils.log import get_logger
+# 分頁標題
+#st.set_page_config(page_title="系統介紹", page_icon="🏠", layout="wide")
+st.html(f"<script>parent.document.title = '系統介紹'</script>")
 
 logger = get_logger(__name__)
 

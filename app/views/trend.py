@@ -4,6 +4,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 
+import sys
+import os
+
 # 設定頁面樣式：移除表單邊框
 st.markdown(
     """
@@ -19,10 +22,16 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+# 使用 insert(0, ...) 確保優先搜尋專案根目錄
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
 # 引用您剛剛建立的 db_connection 函式
 from database.db_connection import get_etf_kline_data, get_etf_list_by_region
 
-#st.set_page_config(page_title="趨勢圖表", page_icon="📈", layout="wide")
+# 分頁標題
+#st.set_page_config(page_title="價格與成交量趨勢", page_icon="📈", layout="wide")
+st.html(f"<script>parent.document.title = '價格與成交量趨勢'</script>")
+
 
 st.title("📈 價格與成交量趨勢圖")
 st.markdown("---")

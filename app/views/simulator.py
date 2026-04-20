@@ -31,7 +31,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 # backtest.py 檔案頂部
 from database.db_connection import get_etf_list_by_region, get_etf_backtest_metrics, get_etf_prices
 
-#st.set_page_config(page_title="投資模擬器", page_icon="💰", layout="wide")
+# 分頁標題
+#st.set_page_config(page_title="ETF 投資模擬器", page_icon="💰", layout="wide")
+st.html(f"<script>parent.document.title = 'ETF 投資模擬器'</script>")
 
 st.title("💰 ETF 投資模擬器")
 st.markdown("---")

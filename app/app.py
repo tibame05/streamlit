@@ -1,7 +1,7 @@
 import streamlit as st
 
 # 必須是第一個 Streamlit 指令
-st.set_page_config(layout="wide")
+st.set_page_config(layout="wide", page_title=None)
 
 # 定義頁面與對應的中標題
 pages = {
