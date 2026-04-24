@@ -15,7 +15,7 @@ st.html(f"<script>parent.document.title = '系統介紹'</script>")
 logger = get_logger(__name__)
 
 def show_home():
-    st.title("ETF 投資數據視覺化系統")
+    st.title("台美 ETF 投資決策分析系統")
 
     st.markdown("""
     這是一個專為 ETF 投資者設計的工具，幫助您透過 **數據** 而非 **感覺** 來做決定。
