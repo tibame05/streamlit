@@ -9,6 +9,21 @@ from dateutil.relativedelta import relativedelta # 用於更精確的日期計�
 import sys
 import os
 
+# 設定頁面樣式：移除表單邊框
+st.markdown(
+    """
+    <style>
+    [data-testid="stForm"] {
+        border: none;
+        padding: 0;
+        background-color: transparent;
+        box-shadow: none;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 # 將專案根目錄加入 sys.path
 # 使用 insert(0, ...) 確保優先搜尋專案根目錄
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -16,11 +31,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 # backtest.py 檔案頂部
 from database.db_connection import get_etf_list_by_region, get_etf_backtest_metrics, get_etf_prices
 
-
-# 假設這些函式已在 db_connection.py 中
-# from database.db_connection import get_etf_list_by_region, get_etf_backtest_metrics, get_etf_prices 
-
-st.set_page_config(page_title="投資模擬器", page_icon="💰", layout="wide")
+# 分頁標題
+#st.set_page_config(page_title="ETF 投資模擬器", page_icon="💰", layout="wide")
+st.html(f"<script>parent.document.title = 'ETF 投資模擬器'</script>")
 
 st.title("💰 ETF 投資模擬器")
 st.markdown("---")
@@ -40,12 +53,13 @@ PERIOD_LABEL_MAP = {
 # ==============================
 # 1. 側邊欄 - 篩選條件
 # ==============================
+# 側邊欄標題
+st.sidebar.header("⚙️ 回測參數設定")
 
-with st.sidebar:
-    st.header("⚙️ 回測參數設定")
+# 地區選擇
+region = st.sidebar.selectbox("地區篩選", options=["TW", "US"], index=0)
 
-    region = st.selectbox("地區篩選", options=["TW", "US"], index=0)
-
+with st.sidebar.form(key='backtest_form', enter_to_submit=False):
     # ETF 代號篩選
     etf_list = get_etf_list_by_region(region)
     if etf_list:
@@ -57,44 +71,50 @@ with st.sidebar:
         
     # 投資方式 (圖三樣式)
     investment_type = st.radio(
-        "一次性 / 定期定額",
-        options=["一次性投入", "定期定額"],
+        "投資策略",
+        options=["一次性投入", "每月定期定額"],
         index=0,
         horizontal=True
     )
 
-    # 投資時間
-    time_period = st.selectbox("投資時間", options=list(PERIOD_MAP.keys()), index=0)
+    # 投資期間
+    time_period = st.selectbox("投資期間", options=list(PERIOD_MAP.keys()), index=0)
     
     # 投入金額 (依地區變換貨幣)
     currency = "TWD" if region == "TW" else "USD"
+    default_amount = 100000 if region == "TW" else 3000
     
-    if investment_type == "一次性投入":
-        amount_label = f"投入金額 (Lump Sum) ({currency})"
-        default_amount = 100000 if region == "TW" else 3000
-    else:
-        # 定期定額時，金額指每月投入金額
-        amount_label = f"每月投入金額 ({currency})"
-        default_amount = 5000 if region == "TW" else 100
-        
     investment_amount = st.number_input(
-        amount_label,
+        f"單次/每月投入金額 ({currency})",
         min_value=1,
         value=default_amount,
         step=1000,
-        format="%d"
+        format="%d",
+        help="按 +/- 鍵可快速加減 1,000 元"
     )
     
-    st.markdown("---")
-    
-    # 初始化 session_state
-    if 'run_backtest_metrics' not in st.session_state:
-        st.session_state.run_backtest_metrics = False
-        
-    if st.button("📈 開始回測", type="primary", use_container_width=True):
-        st.session_state.run_backtest_metrics = True
-    
+    # 必須使用 st.form_submit_button 才能提交表單
+    submit_button = st.form_submit_button(
+        label="💰 開始回測模擬", 
+        type="primary", 
+        width="stretch"
+    )
 
+# ==============================
+
+# 判斷是否按下按鈕
+if submit_button:
+    # 將按鈕按下那一刻的所有參數存入 session_state
+    st.session_state.run_backtest_metrics = True
+    st.session_state.params = {
+        'region': region,
+        'selected_etf_id': selected_etf_str.split(" ")[0],
+        'investment_type': investment_type,
+        'time_period': time_period,
+        'investment_amount': investment_amount,
+        'currency': currency
+    }
+    
 # ==============================
 # 2. 回測核心邏輯與結果顯示
 # ==============================
@@ -109,7 +129,14 @@ if st.session_state.get('run_backtest_metrics', False):
         metrics = get_etf_backtest_metrics(selected_etf_id, period_label_db)
 
     if not metrics:
-        st.error(f"⚠️ 找不到 {selected_etf_id} 在 {time_period} 期間的回測數據。")
+        st.error(f"❌ 數據不足：{selected_etf_id} 的上市年資不滿 {time_period}")
+        
+        # 根據選擇的時間給予引導
+        if time_period == "10年":
+            st.info("💡 建議：該 ETF 成立可能不滿 10 年，請嘗試切換至 「3年」 或 「1年」 期間進行模擬。")
+        elif time_period == "3年":
+            st.info("💡 建議：該 ETF 成立可能不滿 3 年，請嘗試切換至 「1年」 期間進行模擬。")
+            
         st.session_state.run_backtest_metrics = False
         st.stop()
 
@@ -118,7 +145,7 @@ if st.session_state.get('run_backtest_metrics', False):
     
     # 2. 計算最終資產價值 (Final Value)
     
-    if investment_type == "定期定額":
+    if investment_type == "每月定期定額":
         st.warning("⚠️ **注意：** 由於資料庫指標 (CAGR) 適用於「一次性投入」，以下最終價值計算將忽略定期定額的投入時機，**僅基於 Lump Sum CAGR 進行粗略的年化估算**。實際定期定額績效應使用每日價格數據進行模擬。")
         
         # 估算總投入成本：每月投入金額 * 12個月 * 年數
@@ -193,7 +220,7 @@ if st.session_state.get('run_backtest_metrics', False):
             portfolio_history = portfolio_values.values
             invested_history = [investment_amount] * len(dates)
             
-        else: # 定期定額
+        else: # 每月定期定額
             monthly_dates = price_df.resample("MS").first().index
             temp_df = price_df.copy()
             temp_df['shares_bought'] = 0.0
@@ -253,9 +280,12 @@ if st.session_state.get('run_backtest_metrics', False):
                 x=1
             )
         )
-        st.plotly_chart(fig_wealth, use_container_width=True)
+        st.plotly_chart(fig_wealth, width="stretch")
     else:
         st.warning("⚠️ 無法取得詳細價格數據，無法繪製成長曲線。")
     
     # 重設狀態
     st.session_state.run_backtest_metrics = False
+
+else:
+    st.info("👈 請在左側選擇參數並點擊「💰 開始回測模擬」")

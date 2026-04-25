@@ -4,10 +4,34 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 
+import sys
+import os
+
+# 設定頁面樣式：移除表單邊框
+st.markdown(
+    """
+    <style>
+    [data-testid="stForm"] {
+        border: none;
+        padding: 0;
+        background-color: transparent;
+        box-shadow: none;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# 使用 insert(0, ...) 確保優先搜尋專案根目錄
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
 # 引用您剛剛建立的 db_connection 函式
 from database.db_connection import get_etf_kline_data, get_etf_list_by_region
 
-st.set_page_config(page_title="價格與成交量趨勢圖", page_icon="📈", layout="wide")
+# 分頁標題
+#st.set_page_config(page_title="價格與成交量趨勢", page_icon="📈", layout="wide")
+st.html(f"<script>parent.document.title = '價格與成交量趨勢'</script>")
+
 
 st.title("📈 價格與成交量趨勢圖")
 st.markdown("---")
@@ -24,43 +48,48 @@ region_option = st.sidebar.selectbox(
     index=0
 )
 
-# --- ETF 代號篩選 (根據地區連動) ---
-# 取得該地區的 ETF 列表
-etf_list = get_etf_list_by_region(region_option)
+with st.sidebar.form(key='trend_filter_form'):
+    # --- ETF 代號篩選 (根據地區連動) ---
+    # 取得該地區的 ETF 列表
+    etf_list = get_etf_list_by_region(region_option)
 
-if etf_list:
-    selected_etf_str = st.sidebar.selectbox(
-        "ETF 代號篩選",
-        options=etf_list
+    if etf_list:
+        selected_etf_str = st.selectbox(
+            "ETF 代號篩選",
+            options=etf_list
+        )
+        # 從字串 "0050 元大台灣50" 中取出 "0050"
+        selected_etf_id = selected_etf_str.split(" ")[0]
+    else:
+        st.warning(f"查無 {region_option} 地區的 ETF 資料")
+        st.stop()
+
+    # --- 時間尺度篩選 ---
+    time_scale = st.selectbox(
+        "時間尺度",
+        options=["日 (Daily)", "週 (Weekly)", "月 (Monthly)"],
+        index=0
     )
-    # 從字串 "0050 元大台灣50" 中取出 "0050"
-    selected_etf_id = selected_etf_str.split(" ")[0]
-else:
-    st.sidebar.warning(f"查無 {region_option} 地區的 ETF 資料")
-    st.stop()
 
-# --- 時間尺度篩選 ---
-time_scale = st.sidebar.selectbox(
-    "時間尺度",
-    options=["日 (Daily)", "週 (Weekly)", "月 (Monthly)"],
-    index=0
-)
+    # --- 日期範圍選擇 ---
+    # 預設看近一年的資料
+    default_start = datetime.today() - timedelta(days=365)
+    default_end = datetime.today()
 
-# --- 日期範圍選擇 ---
-# 預設看近一年的資料
-default_start = datetime.today() - timedelta(days=365)
-default_end = datetime.today()
+    col1, col2 = st.columns(2)
+    start_date = col1.date_input("開始日期", default_start).strftime("%Y-%m-%d")
+    end_date = col2.date_input("結束日期", default_end).strftime("%Y-%m-%d")
 
-col1, col2 = st.sidebar.columns(2)
-start_date = col1.date_input("開始日期", default_start).strftime("%Y-%m-%d")
-end_date = col2.date_input("結束日期", default_end).strftime("%Y-%m-%d")
-
+    # --- 提交按鈕 ---
+    submit_button = st.form_submit_button("📈 繪製圖表", type="primary", width="stretch")
 
 # ==============================
 # 2. 資料讀取與處理
 # ==============================
 
-if st.sidebar.button("繪製圖表", type="primary", use_container_width=True):
+if submit_button:
+    # 轉換日期格式
+    selected_etf_id = selected_etf_str.split(" ")[0]
     with st.spinner("正在讀取與處理資料..."):
         # 從資料庫讀取原始日資料
         raw_df = get_etf_kline_data(selected_etf_id, start_date, end_date)
@@ -84,7 +113,7 @@ if st.sidebar.button("繪製圖表", type="primary", use_container_width=True):
                 })
             elif "月" in time_scale:
                 # 'M' 代表月底結算
-                df_resampled = df.resample('M').agg({
+                df_resampled = df.resample('ME').agg({
                     'open': 'first',
                     'high': 'max',
                     'low': 'min',
@@ -244,7 +273,7 @@ if st.sidebar.button("繪製圖表", type="primary", use_container_width=True):
             fig.update_yaxes(title_text="成交量", row=2, col=1)
 
             # 顯示圖表
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
 else:
-    st.info("👈 請在左側選擇條件並點擊「繪製圖表」")
+    st.info("👈 請在左側選擇條件並點擊「📈 繪製圖表」")

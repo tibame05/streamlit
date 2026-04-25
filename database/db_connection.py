@@ -1,6 +1,7 @@
 import pandas as pd
 from datetime import datetime, date
 from typing import Optional, List, Dict
+import numpy as np
 
 from sqlalchemy import text
 
@@ -11,9 +12,10 @@ from database import SessionLocal
 # 資料讀取函式 (用於 Streamlit App)
 # ================================
 
+
 def get_etf_overview(region=None, min_return_1y=None, max_expense_ratio=None, 
                      etf_ids=None, sort_by='ETF代號', ascending=True, 
-                     time_period='不限'):
+                     time_period='不限', exclude_outliers=False):
     """
     獲取 ETF 概覽資訊 (已修正 SQL 語法)
     """
@@ -80,14 +82,15 @@ def get_etf_overview(region=None, min_return_1y=None, max_expense_ratio=None,
       -- 確保當前篩選的時間段有數據
       AND {check_col} IS NOT NULL
       
-      -- 動態檢查當前區間的波動度是否 <= 35%
-      AND {vol_col} <= 0.35
-      
       -- 排除異常值
       AND {vol_col} > 0
     """
     
     params = {}
+
+    if exclude_outliers:
+        query += f" AND {vol_col} <= 0.30" # 波動度小於等於 30%
+
     if region:
         query += " AND e.region = :region"
         params['region'] = region
@@ -122,9 +125,21 @@ def get_etf_overview(region=None, min_return_1y=None, max_expense_ratio=None,
 
 def get_etf_list_by_region(region: str) -> list:
     """
-    根據地區取得 ETF 代號列表 (用於下拉選單)
+    取得地區 ETF 列表：
+    1. 必須是 ACTIVE 狀態
+    2. 必須在 etf_backtests 資料表中至少有一筆資料 (確保至少滿一年)
     """
-    query = text("SELECT etf_id, etf_name FROM etfs WHERE region = :region AND status = 'ACTIVE' ORDER BY etf_id")
+    query = text("""
+        SELECT e.etf_id, e.etf_name 
+        FROM etfs e
+        WHERE e.region = :region 
+          AND e.status = 'ACTIVE'
+          AND EXISTS (
+              SELECT 1 FROM etf_backtests b 
+              WHERE b.etf_id = e.etf_id
+          )
+        ORDER BY e.etf_id
+    """)
     try:
         with engine.connect() as conn:
             result = conn.execute(query, {"region": region})
@@ -132,6 +147,7 @@ def get_etf_list_by_region(region: str) -> list:
     except Exception as e:
         logger.error(f"Failed to get ETF list for region {region}: {e}")
         return []
+
 
 def get_etf_kline_data(etf_id: str, start_date: str, end_date: str) -> pd.DataFrame:
     """
@@ -186,70 +202,6 @@ def get_etf_kline_data(etf_id: str, start_date: str, end_date: str) -> pd.DataFr
         logger.error(f"Failed to load K-line data for {etf_id}: {e}", exc_info=True)
         return pd.DataFrame()
 
-def get_etf_table_with_metrics() -> pd.DataFrame:
-    """
-    讀取完整的 ETF 表格，包含回測績效指標。
-    用於「ETF 總表」視覺化。
-    
-    returns:
-        pd.DataFrame: 包含 ETF 基本資料 + 回測績效（1y, 3y, 10y）
-            - etf_id, etf_name, region, expense_ratio, inception_date
-            - avg_dividend_1y (近一年平均配息)
-            - volume_sum_1y, volume_sum_3y, volume_sum_10y (成交量總和)
-            - cagr_1y, cagr_3y, cagr_10y (年化報酬率)
-            - volatility_1y, volatility_3y, volatility_10y (波動度)
-    """
-    query = """
-        SELECT 
-            e.etf_id,
-            e.etf_name,
-            e.region,
-            e.expense_ratio,
-            e.inception_date,
-            
-            -- 近一年平均配息
-            COALESCE(
-                (SELECT AVG(dividend_per_unit) 
-                 FROM etf_dividends d 
-                 WHERE d.etf_id = e.etf_id 
-                   AND d.ex_date >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)),
-                0
-            ) AS avg_dividend_1y,
-            
-            -- 回測績效（1年）
-            b1.cagr AS cagr_1y,
-            b1.volatility AS volatility_1y,
-            b1.max_drawdown AS max_drawdown_1y,
-            b1.sharpe_ratio AS sharpe_ratio_1y,
-            
-            -- 回測績效（3年）
-            b3.cagr AS cagr_3y,
-            b3.volatility AS volatility_3y,
-            b3.max_drawdown AS max_drawdown_3y,
-            b3.sharpe_ratio AS sharpe_ratio_3y,
-            
-            -- 回測績效（10年）
-            b10.cagr AS cagr_10y,
-            b10.volatility AS volatility_10y,
-            b10.max_drawdown AS max_drawdown_10y,
-            b10.sharpe_ratio AS sharpe_ratio_10y
-            
-        FROM etfs e
-        LEFT JOIN etf_backtests b1 ON e.etf_id = b1.etf_id AND b1.label = '1y'
-        LEFT JOIN etf_backtests b3 ON e.etf_id = b3.etf_id AND b3.label = '3y'
-        LEFT JOIN etf_backtests b10 ON e.etf_id = b10.etf_id AND b10.label = '10y'
-        WHERE e.status = 'ACTIVE'
-        ORDER BY e.etf_id
-    """
-    
-    try:
-        df = pd.read_sql(query, engine)
-        logger.info(f"Loaded {len(df)} ETF records with metrics")
-        return df
-    except Exception as e:
-        logger.error(f"Failed to load ETF table with metrics: {e}", exc_info=True)
-        return pd.DataFrame()
-
 
 def get_etf_backtest_metrics(etf_id: str, label: str) -> Dict:
     """
@@ -299,9 +251,123 @@ def get_etf_backtest_metrics(etf_id: str, label: str) -> Dict:
         logger.error(f"Failed to load backtest metrics for {etf_id}: {e}", exc_info=True)
         return {}
 
-# =================================================
-# 以下是原本的
-# =================================================
+
+def get_etf_prices(etf_id: str, start_date: str, end_date: str) -> pd.DataFrame:
+    """
+    讀取指定 ETF 在日期區間內的價格資料。
+    
+    parameters:
+        etf_id (str): ETF 代碼
+        start_date (str): 起始日期 (YYYY-MM-DD)
+        end_date (str): 結束日期 (YYYY-MM-DD)
+    
+    returns:
+        pd.DataFrame: 價格資料，包含 trade_date, adj_close
+    """
+    query = text("""
+        SELECT trade_date, adj_close
+        FROM etf_daily_prices
+        WHERE etf_id = :etf_id
+          AND trade_date BETWEEN :start_date AND :end_date
+        ORDER BY trade_date
+    """)
+    
+    try:
+        df = pd.read_sql(
+            query, 
+            engine, 
+            params={
+                "etf_id": etf_id,
+                "start_date": start_date,
+                "end_date": end_date
+            }
+        )
+        df["trade_date"] = pd.to_datetime(df["trade_date"])
+        logger.info(f"Loaded {len(df)} price records for {etf_id}")
+        return df
+    except Exception as e:
+        logger.error(f"Failed to load prices for {etf_id}: {e}", exc_info=True)
+        return pd.DataFrame()
+
+
+def get_short_term_momentum(region="TW"):
+    """
+    計算資料庫內最新兩週 (10個交易日) 的 ETF 漲跌動能指標
+    指標包含：期間報酬率、日均波動、勝率
+    """
+    # 撰寫 SQL 抓取近 15 天的價格 (多抓幾天以確保有 10 個交易日)
+    query = text("""
+        SELECT etf_id, trade_date, adj_close, volume
+        FROM (
+            SELECT etf_id, trade_date, adj_close, volume,
+                   ROW_NUMBER() OVER (PARTITION BY etf_id ORDER BY trade_date DESC) as rn
+            FROM etf_daily_prices
+            WHERE etf_id IN (SELECT etf_id FROM etfs WHERE region = :region)
+        ) t
+        WHERE rn <= 15  -- 每檔 ETF 只抓最新的 15 筆，確保足夠計算 10 天變動
+    """)
+
+    try:
+        # 使用 engine 連線讀取
+        df = pd.read_sql(query, engine, params={"region": region})
+
+        if df.empty:
+            return pd.DataFrame()
+
+        # --- 模擬計算邏輯 ---
+        results = []
+        
+        # 對每一檔 ETF 進行分組計算
+        for etf_id, group in df.groupby('etf_id'):
+            # 確保排序正確 (由舊到新)
+            group = group.sort_values('trade_date', ascending=True).reset_index(drop=True)
+            
+            # 確保有足夠的資料點計算變動 (11點才能產生10個變動區間)
+            if len(group) < 11: continue 
+            target_group = group.tail(11).reset_index(drop=True)
+            
+            # 取得用於計算的價格序列
+            prices = target_group['adj_close'].astype(float)
+            daily_returns = prices.pct_change().dropna() 
+            
+            # 取出 14 日前(第1筆)與最新(最後1筆)價格
+            start_price = float(prices.iloc[0])
+            latest_price = float(prices.iloc[-1])
+            
+            # --- 指標計算 ---
+            # 1. 期間報酬率 (Total 2-Week Return)
+            return_pct = (latest_price - start_price) / start_price
+            
+            # 2. 日均波動 (Daily Volatility)
+            daily_vol = daily_returns.abs().mean()
+            
+            # 3. 勝率 (Winning Days Rate)
+            win_days = (daily_returns > 0).sum()
+            win_rate = win_days / len(daily_returns)
+            
+            # 修正重點 2: 計算 10 日平均成交量 (取出最後 10 筆交易日)
+            avg_vol = group['volume'].astype(float).tail(10).mean()
+            
+            results.append({
+                'etf_id': etf_id,
+                'start_date': group.iloc[0]['trade_date'],
+                'start_price': start_price,          # 對應 analysis.py
+                'latest_date': group.iloc[-1]['trade_date'],
+                'latest_price': latest_price,        # 對應 analysis.py
+                'avg_volume': avg_vol,               # 對應 analysis.py
+                'return_pct': return_pct * 100,      
+                'daily_vol': daily_vol * 100,        
+                'win_rate': win_rate * 100
+            })            
+        return pd.DataFrame(results)    
+    except Exception as e:
+        logger.error(f"短期動能計算失敗: {e}")
+        return pd.DataFrame()
+    
+
+# ================================
+# 可能沒用到的資料讀取函式 (保留以備未來擴充)
+# ================================
 
 def get_etf_summary() -> pd.DataFrame:
     """
@@ -376,44 +442,6 @@ def get_active_etfs() -> pd.DataFrame:
         return df
     except Exception as e:
         logger.error(f"Failed to load active ETFs: {e}", exc_info=True)
-        return pd.DataFrame()
-
-
-def get_etf_prices(etf_id: str, start_date: str, end_date: str) -> pd.DataFrame:
-    """
-    讀取指定 ETF 在日期區間內的價格資料。
-    
-    parameters:
-        etf_id (str): ETF 代碼
-        start_date (str): 起始日期 (YYYY-MM-DD)
-        end_date (str): 結束日期 (YYYY-MM-DD)
-    
-    returns:
-        pd.DataFrame: 價格資料，包含 trade_date, adj_close
-    """
-    query = text("""
-        SELECT trade_date, adj_close
-        FROM etf_daily_prices
-        WHERE etf_id = :etf_id
-          AND trade_date BETWEEN :start_date AND :end_date
-        ORDER BY trade_date
-    """)
-    
-    try:
-        df = pd.read_sql(
-            query, 
-            engine, 
-            params={
-                "etf_id": etf_id,
-                "start_date": start_date,
-                "end_date": end_date
-            }
-        )
-        df["trade_date"] = pd.to_datetime(df["trade_date"])
-        logger.info(f"Loaded {len(df)} price records for {etf_id}")
-        return df
-    except Exception as e:
-        logger.error(f"Failed to load prices for {etf_id}: {e}", exc_info=True)
         return pd.DataFrame()
 
 
@@ -522,52 +550,7 @@ def get_etf_backtest_data(period: str = '3y') -> pd.DataFrame:
     except Exception as e:
         logger.error(f"Failed to load backtest data for {period}: {e}", exc_info=True)
         return pd.DataFrame()
-
-
-def get_etf_ohlcv(etf_id: str, start_date: str, end_date: str) -> pd.DataFrame:
-    """
-    讀取 K 棒資料（OHLCV）。
     
-    parameters:
-        etf_id (str): ETF 代碼
-        start_date (str): 起始日期 (YYYY-MM-DD)
-        end_date (str): 結束日期 (YYYY-MM-DD)
-    
-    returns:
-        pd.DataFrame: 包含 trade_date, open, high, low, close, adj_close, volume
-    """
-    query = text("""
-        SELECT 
-            trade_date,
-            open,
-            high,
-            low,
-            close,
-            adj_close,
-            volume
-        FROM etf_daily_prices
-        WHERE etf_id = :etf_id
-          AND trade_date BETWEEN :start_date AND :end_date
-        ORDER BY trade_date
-    """)
-    
-    try:
-        df = pd.read_sql(
-            query, 
-            engine, 
-            params={
-                "etf_id": etf_id,
-                "start_date": start_date,
-                "end_date": end_date
-            }
-        )
-        df["trade_date"] = pd.to_datetime(df["trade_date"])
-        logger.info(f"Loaded {len(df)} OHLCV records for {etf_id}")
-        return df
-    except Exception as e:
-        logger.error(f"Failed to load OHLCV for {etf_id}: {e}", exc_info=True)
-        return pd.DataFrame()
-
 
 def get_etf_info(etf_id: str) -> Dict:
     """

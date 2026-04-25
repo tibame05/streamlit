@@ -1,42 +1,20 @@
 import streamlit as st
-import pandas as pd
-import plotly.express as px
-import sys
-import os
 
-# 將專案根目錄加入 sys.path 以便匯入 modules
-# 使用 insert(0, ...) 確保優先搜尋專案根目錄
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# 必須是第一個 Streamlit 指令
+st.set_page_config(layout="wide", page_title=None)
 
-from database.db_connection import get_etf_summary
-from utils.log import get_logger
+# 定義頁面與對應的中標題
+pages = {
+    "導覽": [
+        # 指向自己作為首頁
+        st.Page("views/home.py", title="系統介紹", icon="🏠", default=True),
+        st.Page("views/analysis.py", title="ETF 短期快訊", icon="🔥"),
+        st.Page("views/overview.py", title="ETF 標的選擇", icon="📊"),
+        st.Page("views/trend.py", title="價格與成交量趨勢", icon="📈"),
+        st.Page("views/simulator.py", title="ETF 投資模擬器", icon="💰"),
+    ]
+}
 
-logger = get_logger(__name__)
-st.set_page_config(page_title="ETF Dashboard", layout="wide")
+pg = st.navigation(pages)
+pg.run()
 
-df = get_etf_summary()
-
-st.title("🏦 ETF 排行榜與風險報酬分析")
-if not df.empty:
-    with st.expander("📈 排行榜"):
-        st.dataframe(df)
-
-    with st.expander("📊 風險報酬散點圖"):
-        fig = px.scatter(
-            df,
-            x="volatility_3y",
-            y="annual_return_3y",
-            size="volume",
-            hover_name="name",
-            text="etf_id",
-            labels={
-                "volatility_3y": "年化波動度 (%)",
-                "annual_return_3y": "年化報酬率 (%)",
-                "volume": "成交量",
-                "name": "ETF 名稱",
-                "etf_id": "代號"
-            }
-        )
-        st.plotly_chart(fig, use_container_width=True)
-else:
-    st.warning("無資料或資料庫尚未初始化。")

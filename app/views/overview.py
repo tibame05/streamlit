@@ -1,0 +1,456 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import sys
+import os
+
+# 設定頁面樣式：移除表單邊框
+st.markdown(
+    """
+    <style>
+    /* 1. 移除表單邊框 */
+    [data-testid="stForm"] {
+        border: none;
+        padding: 0;
+        background-color: transparent;
+        box-shadow: none;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# 將專案根目錄加入 sys.path
+# 使用 insert(0, ...) 確保優先搜尋專案根目錄
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+from database.db_connection import get_etf_overview
+from utils.log import get_logger
+
+logger = get_logger("overview")
+
+# 分頁標題
+#st.set_page_config(page_title="ETF 標的選擇", page_icon="📊", layout="wide")
+st.html(f"<script>parent.document.title = 'ETF 標的選擇'</script>")
+
+# 載入資料
+df = get_etf_overview()
+
+# 頁面標題
+st.markdown("# **📊 ETF 標的選擇**")
+
+# 側邊欄 - 篩選條件
+st.sidebar.header("🔍 篩選條件")
+
+# ===== 1. 地區選擇 =====
+st.sidebar.subheader("地區篩選")
+
+region = st.sidebar.selectbox(
+    "地區篩選",
+    options=["不限", "TW", "US"],
+    index=1,  # 預設選擇 TW
+    help="單選"
+)
+region_value = None if region == "不限" else region
+
+# ===== 2. 時間範圍篩選 =====
+st.sidebar.subheader("時間範圍篩選")
+time_period = st.sidebar.selectbox(
+    "顯示時間範圍",
+    options=["不限", "1年", "3年", "10年"],
+    index=0,
+    key="time_period_selector", # 加上 key 確保狀態穩定
+    help="單選"
+)
+
+# 參數設定：將判斷邏輯封裝成一個函式，放在 Form 外部
+if time_period == "不限":
+    display = ['ETF代號', 'ETF名稱', '管理費(%)', '成立日', '1年報酬率(%)', '3年報酬率(%)', '10年報酬率(%)', '1年波動度(%)', '3年波動度(%)', '10年波動度(%)', '1年成交量總和', '3年成交量總和', '10年成交量總和']
+    sort = ["ETF代號", "管理費(%)", '成立日', "1年報酬率(%)", "3年報酬率(%)", "10年報酬率(%)", "1年波動度(%)", "3年波動度(%)", "10年波動度(%)", "1年成交量總和", "3年成交量總和", "10年成交量總和"]
+elif time_period == "1年":
+    display = ['ETF代號', 'ETF名稱', '管理費(%)', '成立日', '1年報酬率(%)', '1年波動度(%)', '1年成交量總和']
+    sort = ["ETF代號", "管理費(%)", '成立日', "1年報酬率(%)", "1年波動度(%)", "1年成交量總和"]
+elif time_period == "3年":
+    display = ['ETF代號', 'ETF名稱', '管理費(%)', '成立日', '3年報酬率(%)', '3年波動度(%)', '3年成交量總和']
+    sort = ["ETF代號", "管理費(%)", '成立日', "3年報酬率(%)", "3年波動度(%)", "3年成交量總和"]
+else: # 10年
+    display = ['ETF代號', 'ETF名稱', '管理費(%)', '成立日', '10年報酬率(%)', '10年波動度(%)', '10年成交量總和']
+    sort = ["ETF代號", "管理費(%)", '成立日', "10年報酬率(%)", "10年波動度(%)", "10年成交量總和"]
+
+# 在側邊欄建立表單
+with st.sidebar.form(key='filter_form'):
+
+    # ===== 3. ETF 代號篩選 =====
+    st.subheader("ETF 代號篩選")
+
+    # 先查詢所有 ETF 代號 (用於下拉選單)
+    @st.cache_data(ttl=3600)  # 快取1小時
+    def get_all_etf_ids(region=None, time_period="不限"): 
+        """取得所有符合時間區間篩選條件的 ETF 代號"""
+        df = get_etf_overview(region=region, time_period=time_period, exclude_outliers=False)
+        if not df.empty:
+            return sorted(df['ETF代號'].tolist())
+        return []
+
+    # 取得 ETF 代號列表
+    all_etf_ids = get_all_etf_ids(region=region_value, time_period=time_period)
+
+    # 多選下拉選單 (可搜尋)
+    selected_etf_ids = st.multiselect(
+        "ETF 代碼篩選",
+        options=all_etf_ids,
+        default=None,
+        placeholder="可搜尋 ETF 代號",
+        help="可多選，留空則顯示全部"
+    )
+
+    etf_ids = selected_etf_ids if selected_etf_ids else None
+
+    # ===== 4. 排序選項 =====
+    st.subheader("排序選項")
+
+    sort_by = st.selectbox(
+        "排序欄位",
+        options=sort,
+        index=0
+    )
+
+    ascending_val = st.radio(
+        "排序方式",
+        options=["升序", "降序"],
+        index=0
+    )
+
+    # 查詢按鈕
+    submit_button = st.form_submit_button("🔄 查詢", type="primary", width="stretch")
+
+# ==============================
+
+# 只有在按下按鈕時，才更新 Session State
+if submit_button:
+    st.session_state['trigger_query'] = True
+    st.session_state['time_period'] = time_period
+    st.session_state['display_columns'] = display
+    st.session_state['region_value'] = region_value
+    st.session_state['etf_ids'] = selected_etf_ids if selected_etf_ids else None
+    st.session_state['sort_by'] = sort_by
+    st.session_state['ascending'] = (ascending_val == "升序")
+
+# 初始化：若沒有資料則預設觸發一次 (或不觸發，等待點擊)
+if 'df' not in st.session_state:
+    st.session_state['trigger_query'] = True
+    st.session_state['time_period'] = time_period
+    st.session_state['display_columns'] = display
+    st.session_state['region_value'] = region_value
+    st.session_state['etf_ids'] = selected_etf_ids if selected_etf_ids else None
+    st.session_state['sort_by'] = sort_by
+    st.session_state['ascending'] = True
+    
+# 查詢資料
+if st.session_state.get('trigger_query'):
+    with st.spinner("🔄 正在從資料庫查詢..."):
+        try:
+            df = get_etf_overview(
+                region=st.session_state.get('region_value'),
+                etf_ids=st.session_state.get('etf_ids'),
+                sort_by=st.session_state.get('sort_by'),
+                ascending=st.session_state.get('ascending'),
+                time_period=st.session_state.get('time_period'),
+                exclude_outliers=False
+            )
+            
+            # 儲存到 session state
+            st.session_state['df'] = df
+            st.session_state['trigger_query'] = False
+            
+        except Exception as e:
+            st.error(f"❌ 查詢失敗: {e}")
+            st.session_state['df'] = pd.DataFrame()
+
+# ==============================
+
+# 顯示結果
+st.markdown("---")
+if 'df' in st.session_state and not st.session_state['df'].empty:
+    df = st.session_state['df']
+    current_sort_by = st.session_state.get('sort_by', 'ETF代號')
+    current_ascending = st.session_state.get('ascending', True)
+    display_columns = st.session_state.get('display_columns', df.columns.tolist())
+    time_period = st.session_state.get('time_period', '不限')
+    
+    # 顯示表格
+    st.markdown(f"## **📋 ETF 概覽資訊 (共 {len(df)} 檔 | 顯示範圍: {time_period})**")  
+
+    # 建立顯示用的副本
+    df_display = df[display_columns].copy()
+
+    # 先將成交量欄位改名
+    volume_rename_map = {col: col + " (百萬)" for col in df_display.columns if "成交量" in col}
+    df_display = df_display.rename(columns=volume_rename_map)
+
+    # 處理排序
+    actual_sort_by = current_sort_by + " (百萬)" if "成交量" in current_sort_by else current_sort_by
+    if actual_sort_by in df_display.columns:
+        sort_temp = pd.to_numeric(df_display[actual_sort_by], errors='coerce')
+        df_display = df_display.loc[sort_temp.sort_values(ascending=current_ascending).index].reset_index(drop=True)
+    
+    # 定義格式化邏輯
+    performance_cols = [
+        '1年報酬率(%)', '3年報酬率(%)', '10年報酬率(%)',
+        '1年波動度(%)', '3年波動度(%)', '10年波動度(%)'
+    ]
+    
+    for col in performance_cols:
+        if col in df_display.columns:
+            df_display[col] = pd.to_numeric(df_display[col], errors='coerce').map(
+                lambda x: f"{x:.2f}%" if pd.notnull(x) else "-"
+            )
+    
+    # 專門處理「管理費(%)」
+    if '管理費(%)' in df_display.columns:
+        df_display['管理費(%)'] = pd.to_numeric(df_display['管理費(%)'], errors='coerce').map(
+            lambda x: f"{x:.2f}%" if pd.notnull(x) else "-"
+        )
+
+    # 動態設定表格樣式
+    column_config = {
+        "ETF代號": st.column_config.TextColumn("ETF代號", width="stretch"),
+        "ETF名稱": st.column_config.TextColumn("ETF名稱", width="stretch"),
+        "管理費(%)": st.column_config.TextColumn("管理費(%)", width="stretch"),
+        "成立日": st.column_config.DateColumn("成立日", format="YYYY-MM-DD", width="stretch"),
+    }
+    
+    # 根據顯示欄位動態加入配置
+    for col in df_display.columns:
+        if "成交量" in col:
+            df_display[col] = pd.to_numeric(df_display[col], errors='coerce') / 1_000_000
+            column_config[col] = st.column_config.NumberColumn(col, format="%,.2f", width="stretch")
+        elif "報酬率" in col or "波動度" in col:
+            column_config[col] = st.column_config.TextColumn(col, width="stretch")
+    
+    # 顯示表格 (使用副本)
+    st.dataframe(
+        df_display,
+        width="stretch",
+        column_config=column_config,
+        hide_index=True
+    )
+    
+    # 下載按鈕
+    csv = df_display.to_csv(index=False, encoding='utf-8-sig')
+    st.download_button(
+        label="📥 下載 CSV",
+        data=csv,
+        file_name=f"etf_overview_{time_period}.csv",
+        mime="text/csv",
+        width="stretch"
+    )
+
+    st.markdown("---")
+
+    # 詳細統計：改為顯示各項指標之最 (圖二的部分)
+    st.markdown("# **🏆 各指標之最**")
+
+    with st.expander(" **🏆 查看各項指標之最 (詳細統計)**", expanded=True):
+        
+        # 輔助函式：取得特定欄位的最佳 ETF
+        def get_best_etf_info(dataframe, col_name, method='max'):
+            """
+            Args:
+                dataframe: 資料表
+                col_name: 要比較的欄位名稱
+                method: 'max' 取最大值, 'min' 取最小值
+            Returns:
+                str: 格式化的字串 "代號 名稱 (數值)"
+            """
+            # 1. 基本檢查
+            if dataframe.empty or col_name not in dataframe.columns:
+                return "無資料"
+            
+            try:
+                # 2. 確保該欄位是數值型態 (處理可能混入的字串或 None)
+                # 使用 errors='coerce' 將無法轉數字的變成 NaN，避免報錯
+                series = pd.to_numeric(dataframe[col_name], errors='coerce')
+                
+                # 3. 尋找最大/最小值的 "索引標籤 (Index Label)"
+                if method == 'max':
+                    idx = series.idxmax()
+                else:
+                    idx = series.idxmin()
+                
+                # 如果整欄都是 NaN，idx 會是 NaN
+                if pd.isna(idx):
+                    return "無有效數值"
+
+                # 4. 使用 .loc[idx] 而不是 .iloc[idx]，因為 idxmax 回傳的是索引標籤，必須用 loc 定位
+                row = dataframe.loc[idx]
+                val = row[col_name]
+                
+                # 5. 數值格式化 (加入錯誤處理以免 val 為 None)
+                if pd.isna(val):
+                    return "數值為空"
+
+                if "報酬率" in col_name or "波動度" in col_name or "管理費" in col_name:
+                    val_str = f"{float(val):.2f}%"
+                elif "成交量" in col_name:
+                    val_str = f"{float(val)/1_000_000:,.2f} (百萬)"
+                else:
+                    val_str = str(val)
+                
+                return f"**{row['ETF代號']} {row['ETF名稱']}**\n\n {val_str}"
+
+            except Exception as e:
+                # 顯示具體錯誤原因，方便除錯 (例如: KeyError, TypeError)
+                return f"錯誤: {str(e)}"
+
+        # 定義要顯示的時間區段
+        if time_period == "不限":
+            periods = ["1年", "3年", "10年"]
+        else:
+            periods = [time_period] # 例如 ["1年"]
+
+        # 版面配置：4欄 (管理費, 成交量, 報酬率, 波動度)
+        col1, col2, col3, col4 = st.columns(4)
+        
+        # --- 1. 成交量 ---
+        with col1:
+            st.markdown("#### 📊 最高成交量")
+            for p in periods:
+                label = f"{p}最高成交量"
+                col_target = f"{p}成交量總和"
+                st.markdown(f"**{p}**")
+                st.success(get_best_etf_info(df, col_target, method='max'))
+
+        # --- 2. 報酬率 ---
+        with col2:
+            st.markdown("#### 🚀 最高報酬率")
+            for p in periods:
+                col_target = f"{p}報酬率(%)"
+                st.markdown(f"**{p}**")
+                # 使用 error 顏色 (紅色) 代表高報酬通常比較顯眼，或維持預設
+                st.error(get_best_etf_info(df, col_target, method='max'))
+
+        # --- 3. 波動度 ---
+        with col3:
+            st.markdown("#### 🛡️ 最低波動度")
+            for p in periods:
+                col_target = f"{p}波動度(%)"
+                st.markdown(f"**{p}**")
+                st.warning(get_best_etf_info(df, col_target, method='min'))
+
+        # --- 4. 管理費 (永遠顯示) ---
+        with col4:
+            st.markdown("#### 💰 最低管理費")
+            st.info(get_best_etf_info(df, "管理費(%)", method='min'))
+
+    st.markdown("---")
+
+    # 風險與報酬氣泡圖
+    st.markdown("# **🫧 風險與報酬氣泡圖**")
+    st.info("💡 為了提升圖表可讀性，我們已自動 **移除波動度 > 30% 的極端標的**。氣泡的大小則代表 **該 ETF 的成交量總和**。")
+
+    # 準備繪圖資料
+    if not df.empty:
+        # 1. 決定要畫哪一個時間區段的資料
+        if time_period == "不限":
+            target_period = "10年"
+        else:
+            target_period = time_period
+
+        # 2. 定義對應的欄位名稱
+        col_x = f"{target_period}波動度(%)"
+        col_y = f"{target_period}報酬率(%)"
+        col_size = f"{target_period}成交量總和 (百萬)"
+        
+        # 3. 檢查欄位是否存在 (安全防護)
+        if col_x in df.columns and col_y in df.columns:
+            st.markdown(f"### **ETF 風險與報酬分析 ({target_period})**")
+            
+            # 複製一份資料作繪圖用
+            chart_df = df_display.copy()
+
+            # 將字串轉回數字進行繪圖
+            for c in [col_x, col_y]:
+                if chart_df[c].dtype == object:
+                    chart_df[c] = pd.to_numeric(chart_df[c].str.replace('%', ''), errors='coerce')
+            
+            if chart_df[col_size].dtype == object:
+                chart_df[col_size] = pd.to_numeric(chart_df[col_size].str.replace(',', ''), errors='coerce')
+            
+            # 執行過濾：只保留波動度 <= 30% 且 > 0 的資料 (排除離群值)
+            chart_df = chart_df[
+                (chart_df[col_x] <= 30) & (chart_df[col_x] > 0)
+            ].dropna(subset=[col_x, col_y])
+
+            # 4. 計算氣泡縮放 (使用已經是百萬單位的數值)
+            max_vol = chart_df[col_size].max()
+            chart_df['size_scaled'] = (chart_df[col_size] / max_vol * 100) if max_vol > 0 else 0
+            
+            # 5. 建立 Plotly 氣泡圖
+            if not chart_df.empty:
+                fig = px.scatter(
+                    chart_df,
+                    x=col_x,
+                    y=col_y,
+                    size='size_scaled',     # [修改] 使用換算後的百分比欄位控制大小
+                    color="ETF代號",        # 顏色區分
+                    hover_name="ETF名稱",
+                    hover_data={
+                        "ETF代號": True,
+                        'size_scaled': False, # 隱藏百分比欄位
+                        col_x: ':.2f', 
+                        col_y: ':.2f', 
+                        col_size: ':,.2f'      # 顯示成交量數值 (百萬)
+                    },
+                    title=None,
+                    text="ETF代號",         # 顯示代號標籤
+                    labels={
+                        col_x: "波動度 (風險) %",
+                        col_y: "年化報酬率 %",
+                        col_size: "成交量（百萬）",
+                        "ETF代號": "代號"
+                    },
+                    size_max=60             # 限制氣泡最大尺寸
+                )
+                
+                # 優化圖表樣式
+                fig.update_traces(
+                    textposition='top center',
+                    textfont=dict(color='black'),
+                    marker=dict(opacity=0.8, line=dict(width=1, color='DarkSlateGrey'))
+                )
+                
+                # 設定軸線與背景
+                fig.update_layout(
+                    height=600,
+                    title={
+                        'text': "",            # 圖表標題已在 update_layout 設定，這裡留空
+                        'font': {'size': 1} 
+                    },
+                    font=dict(color="black"),
+                    xaxis_title="波動度 (越低越好) ⭠",
+                    yaxis_title="年化報酬率 (越高越好) ⭢",
+                    showlegend=True,
+                    legend_title={
+                        "text": "ETF 代號",
+                        "font": {"color": "black"}
+                    },
+                )
+                
+                # 針對 X 軸與 Y 軸的刻度文字與標題再次確保顏色
+                fig.update_xaxes(title_font=dict(color='black'), tickfont=dict(color='black'))
+                fig.update_yaxes(title_font=dict(color='black'), tickfont=dict(color='black'))
+                
+                st.plotly_chart(fig, width="stretch")
+            else:
+                st.warning(f"⚠️ 排除離群值後，無足夠的 {target_period} 數據可繪製氣泡圖。")
+        else:
+            st.error("❌ 無法繪製圖表：找不到對應的欄位數據。")
+
+# (以下接回原本的 elif 'df' in st.session_state ... 程式碼)
+
+elif 'df' in st.session_state and st.session_state['df'].empty:
+    st.warning("⚠️ 查無符合條件的資料")
+
+else:
+    st.info("👈 請在左側設定篩選條件,然後點擊「查詢」按鈕")
